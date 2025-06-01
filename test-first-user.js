@@ -106,48 +106,64 @@ class TestUtilities {
     }
 }
 
+// async function createStealthBrowser() {
+//     console.log('🕵️  Creating stealth browser...');
+
+//     const chromeOptions = new chrome.Options();
+
+//     // Remove automation detection
+//     chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+//     chromeOptions.excludeSwitches(['enable-automation']);
+//     chromeOptions.addArguments('--disable-infobars');
+//     chromeOptions.addArguments('--disable-extensions');
+//     chromeOptions.addArguments('--disable-dev-shm-usage');
+//     chromeOptions.addArguments('--no-sandbox');
+//     chromeOptions.addArguments('--disable-web-security');
+
+//     // Real user agent
+//     chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+
+//     // Disable notifications
+//     chromeOptions.setUserPreferences({
+//         'profile.default_content_setting_values.notifications': 2
+//     });
+
+//     // Create driver
+//     const driver = await new Builder()
+//         .forBrowser('chrome')
+//         .setChromeOptions(chromeOptions)
+//         .build();
+
+//     // Remove webdriver property
+//     await driver.executeScript(`
+//         Object.defineProperty(navigator, 'webdriver', {
+//             get: () => undefined,
+//         });
+//         delete window.navigator.webdriver;
+//         delete window.webdriver;
+//     `);
+
+//     console.log('✅ Stealth browser ready!');
+//     return driver;
+// }
+
+// Helper function to find column index by possible header names
+
 async function createStealthBrowser() {
-    console.log('🕵️  Creating stealth browser...');
-
     const chromeOptions = new chrome.Options();
-
-    // Remove automation detection
     chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
     chromeOptions.excludeSwitches(['enable-automation']);
     chromeOptions.addArguments('--disable-infobars');
-    chromeOptions.addArguments('--disable-extensions');
-    chromeOptions.addArguments('--disable-dev-shm-usage');
-    chromeOptions.addArguments('--no-sandbox');
-    chromeOptions.addArguments('--disable-web-security');
 
-    // Real user agent
-    chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-
-    // Disable notifications
-    chromeOptions.setUserPreferences({
-        'profile.default_content_setting_values.notifications': 2
-    });
-
-    // Create driver
     const driver = await new Builder()
         .forBrowser('chrome')
         .setChromeOptions(chromeOptions)
         .build();
 
-    // Remove webdriver property
-    await driver.executeScript(`
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined,
-        });
-        delete window.navigator.webdriver;
-        delete window.webdriver;
-    `);
-
-    console.log('✅ Stealth browser ready!');
+    await driver.executeScript("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})");
     return driver;
 }
 
-// Helper function to find column index by possible header names
 function findColumnIndex(headers, possibleNames) {
     for (let i = 0; i < headers.length; i++) {
         const header = headers[i] ? headers[i].toString().toLowerCase().trim() : '';
