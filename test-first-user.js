@@ -35,62 +35,87 @@ function findChromeProfilePath() {
             throw new Error('❌ Unsupported operating system');
     }
 
+    // Validate existence
+    if (!fs.existsSync(userDataDir)) {
+        throw new Error(`❌ Chrome profile directory not found at: ${userDataDir}`);
+    }
+
     return { userDataDir };
 }
 
 function listChromeProfiles() {
     console.log('📋 Your Chrome Profiles:\n');
-
     const { userDataDir } = findChromeProfilePath();
 
     try {
+        // 1. Read profiles from Local State
         const localStatePath = path.join(userDataDir, 'Local State');
+        const profiles = {};
 
         if (fs.existsSync(localStatePath)) {
-            const localState = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
-            const profiles = localState.profile?.info_cache || {};
-
-            console.log('🎭 Found these profiles:');
-            console.log('═══════════════════════════════════════');
-
-            Object.keys(profiles).forEach((profileKey, index) => {
-                const profile = profiles[profileKey];
-                const name = profile.name || 'Unnamed Profile';
-                const email = profile.user_name || 'No account linked';
-
-                console.log(`${index + 1}. Profile: "${profileKey}"`);
-                console.log(`   📛 Display Name: ${name}`);
-                console.log(`   📧 Account: ${email}`);
-                console.log(`   🔧 Usage: --profile-directory=${profileKey}`);
-                console.log('───────────────────────────────────────');
-            });
-
-            console.log('\n💡 TIP: "Default" is usually your main profile\n');
-            return Object.keys(profiles);
-
-        } else {
-            console.log('📋 Common Chrome profiles (auto-detected):');
-            console.log('═══════════════════════════════════');
-            console.log('1. "Default" - Your main profile');
-            console.log('2. "Profile 1" - Second profile');
-            console.log('3. "Profile 2" - Third profile');
-            console.log('4. "Profile 3" - Fourth profile\n');
-
-            return ['Default', 'Profile 1', 'Profile 2', 'Profile 3'];
+            try {
+                const localState = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
+                Object.assign(profiles, localState.profile?.info_cache || {});
+            } catch (e) {
+                console.log('⚠️  Could not parse Local State:', e.message);
+            }
         }
 
+        // 2. Scan actual profile directories
+        const profileDirs = fs.readdirSync(userDataDir).filter(dir => {
+            return fs.statSync(path.join(userDataDir, dir)).isDirectory() &&
+                (dir.startsWith('Profile ') || dir === 'Default');
+        });
+
+        // Merge both sources
+        profileDirs.forEach(dir => {
+            if (!profiles[dir]) {
+                profiles[dir] = {
+                    name: dir,
+                    user_name: 'Not in Local State'
+                };
+            }
+        });
+
+        console.log('🎭 Found these profiles:');
+        console.log('═══════════════════════════════════════');
+
+        Object.keys(profiles).forEach((profileKey, index) => {
+            const profile = profiles[profileKey];
+            const name = profile.name || 'Unnamed Profile';
+            const email = profile.user_name || 'No account linked';
+
+            console.log(`${index + 1}. Profile: "${profileKey}"`);
+            console.log(`   📛 Display Name: ${name}`);
+            console.log(`   📧 Account: ${email}`);
+            console.log(`   🔧 Usage: --profile-directory=${profileKey}`);
+            console.log('───────────────────────────────────────');
+        });
+
+        return Object.keys(profiles);
+
     } catch (error) {
-        console.log('⚠️  Could not read profile information:', error.message);
-        console.log('📋 Using default profile names\n');
-        return ['Default', 'Profile 1', 'Profile 2'];
+        console.log('⚠️  Error listing profiles:', error.message);
+        throw new Error('Failed to list Chrome profiles');
     }
 }
+
 
 // === STEALTH CHROME DRIVER CREATION ===
 async function createStealthChromeDriver(profileName = 'Default') {
     console.log(`🕵️  Creating stealth Chrome driver with profile: "${profileName}"...`);
-
     const chromeOptions = new chrome.Options();
+    const { userDataDir } = findChromeProfilePath();
+
+    // Validate profile exists
+    const profilePath = path.join(userDataDir, profileName);
+    if (!fs.existsSync(profilePath)) {
+        throw new Error(`❌ Profile directory not found: ${profilePath}`);
+    }
+
+    // === CRITICAL PROFILE ARGUMENTS ===
+    chromeOptions.addArguments(`--user-data-dir=${userDataDir}`);
+    chromeOptions.addArguments(`--profile-directory=${profileName}`);
 
     // === STEALTH SETTINGS ===
     chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
@@ -104,12 +129,7 @@ async function createStealthChromeDriver(profileName = 'Default') {
     chromeOptions.addArguments('--disable-ipc-flooding-protection');
 
     // === USER AGENT SPOOFING ===
-    chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-
-    // === USE YOUR CHROME PROFILE ===
-    const { userDataDir } = findChromeProfilePath();
-    chromeOptions.addArguments(`--user-data-dir=${userDataDir}`);
-    chromeOptions.addArguments(`--profile-directory=${profileName}`);
+    chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
 
     // === PREFERENCES ===
     chromeOptions.setUserPreferences({
@@ -119,8 +139,7 @@ async function createStealthChromeDriver(profileName = 'Default') {
         'profile.default_content_settings.popups': 0
     });
 
-    console.log(`📁 Profile path: ${userDataDir}`);
-    console.log(`📂 Profile directory: ${profileName}`);
+    console.log(`📁 Profile path: ${profilePath}`);
 
     // === CREATE DRIVER ===
     const driver = await new Builder()
@@ -695,92 +714,33 @@ async function main() {
 
     try {
         if (args.includes('--list-profiles') || args.includes('-l')) {
-            // List profiles only
-            console.log('📋 PROFILE LISTING MODE\n');
             listChromeProfiles();
-
-        } else if (args.includes('--help') || args.includes('-h')) {
-            // Show help
-            console.log('📚 AVAILABLE COMMANDS:\n');
-            console.log('  node automation.js                    Run single user test (recommended first)');
-            console.log('  node automation.js --all              Create ALL users from Excel');
-            console.log('  node automation.js --list-profiles    List all Chrome profiles');
-            console.log('  node automation.js --select-profile   Interactive profile selection');
-            console.log('  node automation.js --help             Show this help\n');
-            console.log('📋 REQUIREMENTS:');
-            console.log('  ✅ Chrome browser installed');
-            console.log('  ✅ Excel file: "Copy of Contractors staff list.xlsx" in same folder');
-            console.log('  ✅ Already logged into https://www.rivosafeguard.com/insight/');
-            console.log('  ✅ ALL Chrome windows closed before running\n');
-
-        } else if (args.includes('--all')) {
-            // Run all users automation
-            console.log('🚀 ALL USERS MODE\n');
-
+        } else {
+            // Always get actual profile list
+            const availableProfiles = listChromeProfiles();
             let profileName = 'Default';
-            if (args.includes('--select-profile')) {
-                profileName = await selectProfileInteractively();
-            } else {
-                console.log('🔍 Available Chrome profiles:');
-                listChromeProfiles();
-                console.log(`🎯 Using profile: "${profileName}"\n`);
+
+            // Verify profile exists
+            if (!availableProfiles.includes(profileName)) {
+                console.warn(`⚠️  Default profile not found, using first available`);
+                profileName = availableProfiles[0] || 'Default';
             }
 
-            console.log('⚠️  IMPORTANT: Make sure ALL Chrome windows are closed!\n');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            await runAllUsersAutomation(profileName);
-
-        } else if (args.includes('--select-profile')) {
-            // Interactive profile selection for single user
-            console.log('🎮 INTERACTIVE PROFILE SELECTION\n');
-            const profileName = await selectProfileInteractively();
-
-            console.log('⚠️  IMPORTANT: Make sure ALL Chrome windows are closed!\n');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            await runSingleUserTest(profileName);
-
-        } else {
-            // Default: Single user test
-            console.log('🧪 SINGLE USER TEST MODE (Recommended for first run)\n');
-            console.log('🔍 Available Chrome profiles:');
-            listChromeProfiles();
-            console.log('🎯 Using "Default" profile (your main profile)\n');
-
-            console.log('⚠️  BEFORE RUNNING:');
-            console.log('1. ✅ Log into https://www.rivosafeguard.com/insight/ in Chrome');
-            console.log('2. ✅ Close ALL Chrome browser windows');
-            console.log('3. ✅ Make sure Excel file is in this folder');
-            console.log('4. ✅ Press Enter to start...\n');
-
-            // Wait for user confirmation
-            process.stdin.setRawMode(true);
-            process.stdin.resume();
-            process.stdin.once('data', () => {
-                process.stdin.setRawMode(false);
-                runSingleUserTest('Default');
-            });
+            if (args.includes('--all')) {
+                await runAllUsersAutomation(profileName);
+            } else {
+                await runSingleUserTest(profileName);
+            }
         }
-
     } catch (error) {
-        console.error('💥 Application failed:', error.message);
-
-        if (error.message.includes('user data directory is already in use')) {
-            console.log('\n💡 SOLUTION:');
-            console.log('1. Close ALL Chrome browser windows');
-            console.log('2. Wait 10 seconds');
-            console.log('3. Run this script again');
-        } else if (error.message.includes('Not logged in')) {
-            console.log('\n💡 SOLUTION:');
-            console.log('1. Open Chrome browser');
-            console.log('2. Go to https://www.rivosafeguard.com/insight/');
-            console.log('3. Log in to your account');
-            console.log('4. Close ALL Chrome windows');
-            console.log('5. Run this script again');
+        // Add specific profile error handling
+        if (error.message.includes('profile directory not found')) {
+            console.error('💥 PROFILE ERROR:', error.message);
+            console.log('🔍 Try these solutions:');
+            console.log('1. Run with --list-profiles to see available profiles');
+            console.log('2. Close all Chrome windows before running');
+            console.log('3. Use --select-profile to choose interactively');
         }
-
-        process.exit(1);
     }
 }
 
