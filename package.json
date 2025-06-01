@@ -1,0 +1,31 @@
+{
+  "name": "contractors_safeguarding",
+  "version": "1.0.0",
+  "description": "This project automates the creation of users from an Excel file using Selenium WebDriver, filtered for **Security department contractors only**.",
+  "main": "user-creation-automation.js",
+  "scripts": {
+    "test": "mocha test-first-user.js --timeout 60000",
+    "create-first": "node test-first-user.js",
+    "create-all": "node user-creation-automation.js",
+    "dry-run": "node dry-run-automation.js --dry-run",
+    "dry-run-detailed": "node dry-run-automation.js --dry-run",
+    "validate-excel": "node validate-excel.js",
+    "check-columns": "node -e \"const {validateExcelFile} = require('./validate-excel.js'); validateExcelFile();\"",
+    "install-deps": "npm install selenium-webdriver xlsx mocha"
+  },
+  "keywords": [
+    "automation",
+    "selenium",
+    "excel",
+    "user-creation",
+    "first-name",
+    "last-name"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mocha": "^11.5.0",
+    "selenium-webdriver": "^4.33.0",
+    "xlsx": "^0.18.5"
+  }
+}
