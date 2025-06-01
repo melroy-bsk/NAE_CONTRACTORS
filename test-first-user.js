@@ -1,305 +1,418 @@
-// Updated Test script to create the first user from Excel file using First Name and Last Name columns
+// Standalone Test Script - No Mocha Required
+// Run with: node test-first-user-standalone.js
+
 const { Builder, By, Key, until } = require('selenium-webdriver');
 const XLSX = require('xlsx');
-const assert = require('assert');
+const fs = require('fs');
 
-describe('create first user from excel using first name and last name columns', function () {
-    this.timeout(60000); // Increased timeout for file operations
-    let driver;
-    let vars;
-    let firstContractor;
+// Configuration
+const CONFIG = {
+    defaultTimeout: 15000,
+    pageLoadTimeout: 30000,
+    elementTimeout: 10000,
+    excelFileName: 'Copy of Contractors staff list.xlsx'
+};
 
-    // Helper function to find column index by possible header names
-    function findColumnIndex(headers, possibleNames) {
-        for (let i = 0; i < headers.length; i++) {
-            const header = headers[i] ? headers[i].toString().toLowerCase().trim() : '';
-            if (possibleNames.some(name => header.includes(name))) {
-                return i;
-            }
-        }
-        return -1;
+class TestUtilities {
+    constructor(driver) {
+        this.driver = driver;
     }
 
-    beforeEach(async function () {
-        // Read Excel file and get first contractor
-        console.log('Reading Excel file...');
-        const workbook = XLSX.readFile('Copy of Contractors staff list.xlsx');
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        // Find column indices for required fields
-        const headers = rawData[0] || [];
-        const codeIndex = 0; // Assuming first column is always code
-        const firstNameIndex = findColumnIndex(headers, ['first name', 'firstname', 'forename']);
-        const lastNameIndex = findColumnIndex(headers, ['last name', 'lastname', 'surname']);
-        const departmentIndex = findColumnIndex(headers, ['department', 'dept']);
-
-        console.log('Column mapping:');
-        console.log(`  Code: Column ${codeIndex} (${headers[codeIndex]})`);
-        console.log(`  First Name: Column ${firstNameIndex} (${headers[firstNameIndex]})`);
-        console.log(`  Last Name: Column ${lastNameIndex} (${headers[lastNameIndex]})`);
-        console.log(`  Department: Column ${departmentIndex} (${headers[departmentIndex]})`);
-
-        if (firstNameIndex === -1 || lastNameIndex === -1 || departmentIndex === -1) {
-            throw new Error('Required columns not found. Need: First Name, Last Name, Department');
-        }
-
-        // Find first Security department contractor
-        let foundContractor = false;
-        for (let i = 1; i < rawData.length; i++) {
-            const row = rawData[i];
-            if (row && row[codeIndex] && row[firstNameIndex] && row[lastNameIndex]) {
-                const code = row[codeIndex].toString().trim();
-                const firstName = row[firstNameIndex].toString().trim();
-                const lastName = row[lastNameIndex].toString().trim();
-                const department = row[departmentIndex] ? row[departmentIndex].toString().trim() : '';
-                const fullName = `${firstName} ${lastName}`;
-
-                if (department.toLowerCase() === 'security') {
-                    const username = `${code}_${firstName}_${lastName}`.toLowerCase().replace(/\s+/g, '_');
-
-                    firstContractor = {
-                        code: code,
-                        fullName: fullName,
-                        firstName: firstName,
-                        lastName: lastName,
-                        department: department || 'Security',
-                        username: username,
-                        password: username
-                    };
-
-                    console.log('First Security contractor to create:', firstContractor);
-                    foundContractor = true;
-                    break;
+    // Safe element interaction with retry logic
+    async safeClick(selector, description, timeout = CONFIG.elementTimeout) {
+        let attempts = 3;
+        while (attempts > 0) {
+            try {
+                console.log(`   🖱️  Attempting to click: ${description}`);
+                const element = await this.driver.wait(until.elementLocated(selector), timeout);
+                await this.driver.wait(until.elementIsEnabled(element), timeout);
+                await element.click();
+                console.log(`   ✅ Successfully clicked: ${description}`);
+                return element;
+            } catch (error) {
+                attempts--;
+                console.log(`   ⚠️  Click attempt failed for ${description}, ${attempts} attempts remaining`);
+                if (attempts === 0) {
+                    throw new Error(`Failed to click ${description}: ${error.message}`);
                 }
+                await this.driver.sleep(1000);
             }
         }
+    }
 
-        if (!foundContractor) {
-            throw new Error('No Security department contractors found in Excel file');
+    // Safe text input with validation
+    async safeInput(selector, text, description, timeout = CONFIG.elementTimeout) {
+        try {
+            console.log(`   ✏️  Entering text in: ${description}`);
+            const element = await this.driver.wait(until.elementLocated(selector), timeout);
+            await this.driver.wait(until.elementIsEnabled(element), timeout);
+
+            await element.clear();
+            await element.sendKeys(text);
+
+            // Validate the text was entered correctly
+            const actualValue = await element.getAttribute('value');
+            if (actualValue !== text) {
+                console.log(`   ⚠️  Text validation warning. Expected: "${text}", Got: "${actualValue}"`);
+            }
+
+            console.log(`   ✅ Successfully entered: ${description}`);
+            return element;
+        } catch (error) {
+            throw new Error(`Failed to enter text in ${description}: ${error.message}`);
         }
+    }
 
-        // Initialize driver
+    // Safe dropdown selection
+    async safeSelectOption(dropdownSelector, optionText, description, timeout = CONFIG.elementTimeout) {
+        try {
+            console.log(`   📋 Selecting option "${optionText}" in: ${description}`);
+            const dropdown = await this.driver.wait(until.elementLocated(dropdownSelector), timeout);
+            await this.driver.wait(until.elementIsEnabled(dropdown), timeout);
+
+            // Try to find and click the option
+            const options = await dropdown.findElements(By.xpath(`//option[normalize-space(text()) = '${optionText}']`));
+            if (options.length === 0) {
+                console.log(`   ⚠️  Option "${optionText}" not found in ${description}, continuing...`);
+                return dropdown;
+            }
+
+            await options[0].click();
+            console.log(`   ✅ Successfully selected: ${optionText}`);
+            return dropdown;
+        } catch (error) {
+            console.log(`   ⚠️  Failed to select option in ${description}: ${error.message}`);
+            return null;
+        }
+    }
+
+    // Wait for page to be ready
+    async waitForPageReady(timeout = CONFIG.pageLoadTimeout) {
+        try {
+            await this.driver.wait(
+                () => this.driver.executeScript('return document.readyState === "complete"'),
+                timeout
+            );
+        } catch (error) {
+            console.log('   ⚠️  Page ready check failed, continuing...');
+        }
+    }
+
+    // Human-like delay
+    async humanDelay(baseMs = 1000, variationMs = 500) {
+        const randomVariation = Math.random() * variationMs * 2 - variationMs;
+        const totalDelay = Math.max(baseMs + randomVariation, 200);
+        await this.driver.sleep(totalDelay);
+    }
+}
+
+// Helper function to find column index by possible header names
+function findColumnIndex(headers, possibleNames) {
+    for (let i = 0; i < headers.length; i++) {
+        const header = headers[i] ? headers[i].toString().toLowerCase().trim() : '';
+        if (possibleNames.some(name => header.includes(name))) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Load contractor data from Excel
+function loadContractorData() {
+    console.log('📁 Loading contractor data from Excel...');
+
+    // Check if file exists
+    if (!fs.existsSync(CONFIG.excelFileName)) {
+        throw new Error(`❌ Excel file not found: ${CONFIG.excelFileName}`);
+    }
+
+    // Read Excel file
+    const workbook = XLSX.readFile(CONFIG.excelFileName);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+    if (!rawData || rawData.length < 2) {
+        throw new Error('❌ Excel file appears to be empty or has no data rows');
+    }
+
+    // Find column indices
+    const headers = rawData[0] || [];
+    const codeIndex = 0;
+    const firstNameIndex = findColumnIndex(headers, ['first name', 'firstname', 'forename']);
+    const lastNameIndex = findColumnIndex(headers, ['last name', 'lastname', 'surname']);
+    const departmentIndex = findColumnIndex(headers, ['department', 'dept']);
+
+    console.log('📊 Column mapping:');
+    console.log(`   Code: Column ${codeIndex} (${headers[codeIndex] || 'NOT FOUND'})`);
+    console.log(`   First Name: Column ${firstNameIndex} (${headers[firstNameIndex] || 'NOT FOUND'})`);
+    console.log(`   Last Name: Column ${lastNameIndex} (${headers[lastNameIndex] || 'NOT FOUND'})`);
+    console.log(`   Department: Column ${departmentIndex} (${headers[departmentIndex] || 'NOT FOUND'})`);
+
+    if (firstNameIndex === -1 || lastNameIndex === -1 || departmentIndex === -1) {
+        throw new Error('❌ Required columns not found. Need: First Name, Last Name, Department');
+    }
+
+    // Find first Security department contractor
+    for (let i = 1; i < rawData.length; i++) {
+        const row = rawData[i];
+        if (row && row[codeIndex] && row[firstNameIndex] && row[lastNameIndex]) {
+            const code = row[codeIndex].toString().trim();
+            const firstName = row[firstNameIndex].toString().trim();
+            const lastName = row[lastNameIndex].toString().trim();
+            const department = row[departmentIndex] ? row[departmentIndex].toString().trim() : '';
+
+            if (department.toLowerCase() === 'security') {
+                const fullName = `${firstName} ${lastName}`;
+                const username = `${code}_${firstName}_${lastName}`.toLowerCase().replace(/\s+/g, '_');
+
+                const contractor = {
+                    code: code,
+                    fullName: fullName,
+                    firstName: firstName,
+                    lastName: lastName,
+                    department: department || 'Security',
+                    username: username,
+                    password: username
+                };
+
+                console.log('👤 First Security contractor found:');
+                console.log(`   Name: ${contractor.fullName}`);
+                console.log(`   Username: ${contractor.username}`);
+                console.log(`   Department: ${contractor.department}`);
+                console.log(`   Code: ${contractor.code}`);
+
+                return contractor;
+            }
+        }
+    }
+
+    throw new Error('❌ No Security department contractors found in Excel file');
+}
+
+// Main test function
+async function createFirstUserTest() {
+    let driver;
+    let testUtils;
+
+    try {
+        console.log('🚀 Starting first user creation test...');
+
+        // Load contractor data
+        const contractor = loadContractorData();
+
+        // Initialize WebDriver
+        console.log('🌐 Initializing browser...');
         driver = await new Builder().forBrowser('firefox').build();
-        vars = {};
-    });
+        testUtils = new TestUtilities(driver);
 
-    afterEach(async function () {
-        await driver.quit();
-    });
-
-    it('create first user from excel using first and last name columns', async function () {
-        console.log(`Creating user: ${firstContractor.username} (${firstContractor.fullName})`);
-
-        // Navigate to the application
-        await driver.get("https://www.rivosafeguard.com/insight/");
         await driver.manage().window().setRect({ width: 1382, height: 736 });
 
+        console.log(`\n👤 Creating user: ${contractor.username} (${contractor.fullName})`);
+
+        // Navigate to the application
+        console.log('🌐 Navigating to Rivo Safeguard...');
+        await driver.get("https://www.rivosafeguard.com/insight/");
+        await testUtils.waitForPageReady();
+        await testUtils.humanDelay(3000, 1000);
+
         // Follow navigation sequence
-        await driver.findElement(By.css(".sch-container-left")).click();
-        await driver.findElement(By.css(".sch-app-launcher-button")).click();
-        await driver.findElement(By.css(".sch-link-title:nth-child(6) > .sch-link-title-text")).click();
-        await driver.findElement(By.css(".k-drawer-item:nth-child(6)")).click();
+        console.log('🧭 Following navigation sequence...');
+        await testUtils.safeClick(By.css(".sch-container-left"), "Left container");
+        await testUtils.humanDelay(1500, 500);
+
+        await testUtils.safeClick(By.css(".sch-app-launcher-button"), "App launcher");
+        await testUtils.humanDelay(2000, 800);
+
+        await testUtils.safeClick(By.css(".sch-link-title:nth-child(6) > .sch-link-title-text"), "Menu item");
+        await testUtils.humanDelay(2500, 1000);
+
+        await testUtils.safeClick(By.css(".k-drawer-item:nth-child(6)"), "User management");
+        await testUtils.humanDelay(3000, 1500);
 
         // Switch to frame
+        console.log('🖼️  Switching to user creation frame...');
         await driver.switchTo().frame(0);
+        await testUtils.humanDelay(2000, 1000);
 
-        // Fill in Username using contractor data
-        await driver.findElement(By.id("Username")).click();
-        await driver.findElement(By.id("Username")).clear();
-        await driver.findElement(By.id("Username")).sendKeys(firstContractor.username);
+        // Fill in basic user information
+        console.log('📝 Filling user information...');
 
-        // Fill in Password
-        await driver.findElement(By.name("Password")).click();
-        await driver.findElement(By.name("Password")).clear();
-        await driver.findElement(By.name("Password")).sendKeys(firstContractor.password);
+        await testUtils.safeInput(By.id("Username"), contractor.username, "Username");
+        await testUtils.humanDelay(1200, 600);
 
-        // Fill in Job Title (Department)
-        await driver.findElement(By.name("JobTitle")).click();
-        await driver.findElement(By.name("JobTitle")).clear();
-        await driver.findElement(By.name("JobTitle")).sendKeys(firstContractor.department);
+        await testUtils.safeInput(By.name("Password"), contractor.password, "Password");
+        await testUtils.humanDelay(1000, 500);
 
-        // Fill in First Name
-        await driver.findElement(By.id("Attributes.People.Forename")).click();
-        await driver.findElement(By.id("Attributes.People.Forename")).clear();
-        await driver.findElement(By.id("Attributes.People.Forename")).sendKeys(firstContractor.firstName);
+        await testUtils.safeInput(By.name("JobTitle"), contractor.department, "Job Title");
+        await testUtils.humanDelay(1500, 700);
 
-        // Fill in Last Name
-        await driver.findElement(By.id("Attributes.People.Surname")).click();
-        await driver.findElement(By.id("Attributes.People.Surname")).clear();
-        await driver.findElement(By.id("Attributes.People.Surname")).sendKeys(firstContractor.lastName);
+        await testUtils.safeInput(By.id("Attributes.People.Forename"), contractor.firstName, "First Name");
+        await testUtils.humanDelay(1000, 500);
 
-        // Fill in Employee Number (Contractor Code)
-        await driver.findElement(By.id("Attributes.Users.EmployeeNumber")).click();
-        await driver.findElement(By.id("Attributes.Users.EmployeeNumber")).clear();
-        await driver.findElement(By.id("Attributes.Users.EmployeeNumber")).sendKeys(firstContractor.code);
+        await testUtils.safeInput(By.id("Attributes.People.Surname"), contractor.lastName, "Last Name");
+        await testUtils.humanDelay(1200, 600);
 
-        // Handle Hierarchy selection (following original pattern)
+        await testUtils.safeInput(By.id("Attributes.Users.EmployeeNumber"), contractor.code, "Employee Number");
+        await testUtils.humanDelay(1500, 750);
+
+        // Handle Hierarchy selection (with better error handling)
+        console.log('🏢 Configuring hierarchy settings...');
         try {
-            await driver.findElement(By.id("Hierarchies01zzz")).click();
-            await driver.findElement(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1")).click();
-            await driver.findElement(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)")).click();
-            await driver.findElement(By.css("#\\31 657_HomeLocationHierarchy > option:nth-child(2)")).click();
-            await driver.findElement(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1")).click();
-            await driver.findElement(By.css(".HierarchyNode__SelectDiv-sc-1ytna50-2")).click();
-            await driver.findElement(By.css(".DropdownDisplay__DropdownText-sc-6p7u3y-0 > span:nth-child(1)")).click();
-            await driver.findElement(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6")).click();
-            await driver.findElement(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6")).click();
-            await driver.findElement(By.css(".HierarchyNode__NodeText-sc-1ytna50-1")).click();
-            await driver.findElement(By.name("addHierarchyGroupsLocations")).click();
-            await driver.findElement(By.css("#OverlayContainer > .StandardButton")).click();
+            await testUtils.safeClick(By.id("Hierarchies01zzz"), "Hierarchy button");
+            await testUtils.humanDelay(1500, 750);
+
+            await testUtils.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Hierarchy dropdown");
+            await testUtils.humanDelay(1200, 600);
+
+            await testUtils.safeClick(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)"), "Hierarchy lookup");
+            await testUtils.humanDelay(2000, 1000);
+
+            // Try home location hierarchy (optional)
+            try {
+                await testUtils.safeClick(By.css("#\\31 657_HomeLocationHierarchy > option:nth-child(2)"), "Home location");
+                await testUtils.humanDelay(1500, 750);
+            } catch (error) {
+                console.log('   ⚠️  Home location hierarchy not found, continuing...');
+            }
+
+            // Additional hierarchy navigation
+            await testUtils.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Hierarchy dropdown 2");
+            await testUtils.humanDelay(1000, 500);
+
+            await testUtils.safeClick(By.css(".HierarchyNode__SelectDiv-sc-1ytna50-2"), "Hierarchy node select");
+            await testUtils.humanDelay(1200, 600);
+
+            await testUtils.safeClick(By.css(".DropdownDisplay__DropdownText-sc-6p7u3y-0 > span:nth-child(1)"), "Dropdown text");
+            await testUtils.humanDelay(1500, 750);
+
+            // Navigate hierarchy tree (optional)
+            try {
+                await testUtils.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Hierarchy arrow 1");
+                await testUtils.humanDelay(1000, 500);
+
+                await testUtils.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Hierarchy arrow 2");
+                await testUtils.humanDelay(1000, 500);
+
+                await testUtils.safeClick(By.css(".HierarchyNode__NodeText-sc-1ytna50-1"), "Hierarchy node text");
+                await testUtils.humanDelay(1500, 750);
+            } catch (error) {
+                console.log('   ⚠️  Hierarchy tree navigation failed, continuing...');
+            }
+
+            // Add hierarchy groups/locations
+            await testUtils.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups");
+            await testUtils.humanDelay(2000, 1000);
+
+            await testUtils.safeClick(By.css("#OverlayContainer > .StandardButton"), "Overlay confirm");
+            await testUtils.humanDelay(1500, 750);
+
         } catch (error) {
-            console.log('Some hierarchy selections failed, continuing...');
+            console.log('   ⚠️  Some hierarchy operations failed, continuing...');
         }
 
-        // Group tab operations
+        // Group operations
+        console.log('👥 Managing groups and permissions...');
         try {
-            await driver.findElement(By.id("GroupTabDiv_23890")).click();
-        } catch (error) {
-            console.log('Group tab not found, continuing...');
-        }
+            // Group tab
+            try {
+                await testUtils.safeClick(By.id("GroupTabDiv_23890"), "Group tab");
+                await testUtils.humanDelay(1500, 750);
+            } catch (error) {
+                console.log('   ⚠️  Group tab not found, continuing...');
+            }
 
-        // Update password in second field
-        await driver.findElement(By.name("Password")).click();
-        await driver.findElement(By.name("Password")).clear();
-        await driver.findElement(By.name("Password")).sendKeys(firstContractor.password);
+            // Update password in second field
+            await testUtils.safeInput(By.name("Password"), contractor.password, "Password confirmation");
+            await testUtils.humanDelay(1500, 750);
 
-        // Additional group/location operations
-        try {
-            await driver.findElement(By.name("addHierarchyGroupsLocations")).click();
-            await driver.findElement(By.css("#ManageHierarchyUGroupLocationsForm > .GroupTab:nth-child(1)")).click();
+            // Additional group operations
+            await testUtils.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups 2");
+            await testUtils.humanDelay(2000, 1000);
+
+            await testUtils.safeClick(By.css("#ManageHierarchyUGroupLocationsForm > .GroupTab:nth-child(1)"), "Group tab form");
+            await testUtils.humanDelay(1500, 750);
 
             // Select User Group - Third Party Staff
-            const dropdown = await driver.findElement(By.id("UGroupID"));
-            await dropdown.findElement(By.xpath("//option[. = 'Third Party Staff']")).click();
-            await driver.findElement(By.css("option:nth-child(19)")).click();
+            await testUtils.safeSelectOption(By.id("UGroupID"), "Third Party Staff", "User Group");
+            await testUtils.humanDelay(2000, 1000);
 
-            // More hierarchy navigation
-            await driver.findElement(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1")).click();
-            await driver.findElement(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6")).click();
-            await driver.findElement(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6")).click();
-            await driver.findElement(By.css(".HierarchyNode__NodeText-sc-1ytna50-1")).click();
-            await driver.findElement(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)")).click();
+            // Additional hierarchy selections (optional)
+            try {
+                await testUtils.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Final hierarchy dropdown");
+                await testUtils.humanDelay(1000, 500);
+
+                await testUtils.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Final hierarchy arrow 1");
+                await testUtils.humanDelay(800, 400);
+
+                await testUtils.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Final hierarchy arrow 2");
+                await testUtils.humanDelay(800, 400);
+
+                await testUtils.safeClick(By.css(".HierarchyNode__NodeText-sc-1ytna50-1"), "Final hierarchy node");
+                await testUtils.humanDelay(1000, 500);
+
+                await testUtils.safeClick(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)"), "Final hierarchy lookup");
+                await testUtils.humanDelay(1500, 750);
+            } catch (error) {
+                console.log('   ⚠️  Final hierarchy selections failed, continuing...');
+            }
+
         } catch (error) {
-            console.log('Some group operations failed, continuing...');
+            console.log('   ⚠️  Some group operations failed, continuing...');
         }
 
-        // Set action and employment status
+        // Final settings
+        console.log('⚙️  Configuring final settings...');
         try {
-            await driver.findElement(By.id("Action")).click();
-
             // Set Status of Employment to Current
-            const statusDropdown = await driver.findElement(By.id("Attributes.Users.StatusOfEmployment"));
-            await statusDropdown.findElement(By.xpath("//option[. = 'Current']")).click();
-            await driver.findElement(By.css("#Attributes\\.Users\\.StatusOfEmployment > option:nth-child(3)")).click();
+            await testUtils.safeSelectOption(By.id("Attributes.Users.StatusOfEmployment"), "Current", "Employment Status");
+            await testUtils.humanDelay(1000, 500);
 
             // Set User Type to Limited access user
-            const userTypeDropdown = await driver.findElement(By.id("UserTypeID"));
-            await userTypeDropdown.findElement(By.xpath("//option[. = 'Limited access user']")).click();
-            await driver.findElement(By.css("#UserTypeID > option:nth-child(2)")).click();
+            await testUtils.safeSelectOption(By.id("UserTypeID"), "Limited access user", "User Type");
+            await testUtils.humanDelay(2000, 1000);
+
         } catch (error) {
-            console.log('Some dropdown selections failed, continuing...');
+            console.log('   ⚠️  Some final settings failed, continuing...');
         }
 
         // Save the user
-        await driver.findElement(By.name("save")).click();
+        console.log('💾 Saving user...');
+        await testUtils.safeClick(By.name("save"), "Save button");
+        await testUtils.humanDelay(5000, 2000);
 
-        console.log(`✓ Successfully created user: ${firstContractor.username}`);
-
-        // Wait a bit to see the result
-        await driver.sleep(5000);
-    });
-});
-
-// Function to run the test directly (non-Mocha mode)
-async function createFirstUser() {
-    console.log('Starting first user creation test...');
-
-    try {
-        // Read Excel file
-        const workbook = XLSX.readFile('Copy of Contractors staff list.xlsx');
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        // Helper function for column finding
-        function findColumnIndex(headers, possibleNames) {
-            for (let i = 0; i < headers.length; i++) {
-                const header = headers[i] ? headers[i].toString().toLowerCase().trim() : '';
-                if (possibleNames.some(name => header.includes(name))) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        // Find column indices
-        const headers = rawData[0] || [];
-        const codeIndex = 0;
-        const firstNameIndex = findColumnIndex(headers, ['first name', 'firstname', 'forename']);
-        const lastNameIndex = findColumnIndex(headers, ['last name', 'lastname', 'surname']);
-        const departmentIndex = findColumnIndex(headers, ['department', 'dept']);
-
-        console.log('📍 Column mapping:');
-        console.log(`   Code: Column ${codeIndex} (${headers[codeIndex]})`);
-        console.log(`   First Name: Column ${firstNameIndex} (${headers[firstNameIndex]})`);
-        console.log(`   Last Name: Column ${lastNameIndex} (${headers[lastNameIndex]})`);
-        console.log(`   Department: Column ${departmentIndex} (${headers[departmentIndex]})`);
-
-        if (firstNameIndex === -1 || lastNameIndex === -1 || departmentIndex === -1) {
-            console.error('❌ Required columns not found. Need: First Name, Last Name, Department');
-            return;
-        }
-
-        // Find first Security contractor
-        let contractor = null;
-        for (let i = 1; i < rawData.length; i++) {
-            const row = rawData[i];
-            if (row && row[codeIndex] && row[firstNameIndex] && row[lastNameIndex]) {
-                const department = row[departmentIndex] ? row[departmentIndex].toString().trim() : '';
-
-                if (department.toLowerCase() === 'security') {
-                    const code = row[codeIndex].toString().trim();
-                    const firstName = row[firstNameIndex].toString().trim();
-                    const lastName = row[lastNameIndex].toString().trim();
-                    const fullName = `${firstName} ${lastName}`;
-                    const username = `${code}_${firstName}_${lastName}`.toLowerCase().replace(/\s+/g, '_');
-
-                    contractor = {
-                        code: code,
-                        fullName: fullName,
-                        firstName: firstName,
-                        lastName: lastName,
-                        department: department || 'Security',
-                        username: username,
-                        password: username
-                    };
-                    break;
-                }
-            }
-        }
-
-        if (!contractor) {
-            console.log('⚠️  No Security department contractors found in Excel file');
-            return;
-        }
-
-        console.log('👥 First Security contractor found:');
-        console.log(`   Name: ${contractor.fullName}`);
-        console.log(`   Username: ${contractor.username}`);
-        console.log(`   Department: ${contractor.department}`);
-        console.log(`   Code: ${contractor.code}`);
-        console.log('\n🧪 To run this test with the browser:');
-        console.log('   npm test');
-        console.log('   OR: npx mocha test-first-user-updated.js');
+        console.log(`\n✅ Successfully completed user creation test for: ${contractor.username}`);
+        console.log('🎉 Test completed successfully!');
 
     } catch (error) {
-        console.error('❌ Error:', error.message);
+        console.error(`\n❌ Test failed: ${error.message}`);
+        console.error('💡 Check the browser window for more details');
+        throw error;
+    } finally {
+        if (driver) {
+            console.log('\n🧹 Cleaning up...');
+            await driver.sleep(3000); // Keep browser open for a moment to see results
+            await driver.quit();
+            console.log('✅ Browser closed');
+        }
     }
 }
 
-// Run if called directly
+// Run the test
 if (require.main === module) {
-    createFirstUser();
+    console.log('🧪 Starting standalone user creation test...');
+    console.log('📋 This will create the first Security department contractor from your Excel file\n');
+
+    createFirstUserTest()
+        .then(() => {
+            console.log('\n🏁 Test execution completed successfully!');
+            process.exit(0);
+        })
+        .catch((error) => {
+            console.error('\n💥 Test execution failed!');
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        });
 }
+
+module.exports = { createFirstUserTest, loadContractorData };
