@@ -1,131 +1,380 @@
-// FIXED CHROME PROFILE AUTOMATION SCRIPT
-// Uses your existing Chrome profile, stealth mode, and Excel processing
-// Fixed to properly use Profile 1 (work account) and added missing functionality
+// PROFILE FIX DIAGNOSTIC - Step by Step Solution
+// This will identify and fix the Chrome profile issue
 
 const { Builder, By, Key, until } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
 const path = require('path');
 const os = require('os');
-const XLSX = require('xlsx');
 const fs = require('fs');
+const { exec } = require('child_process');
 
-// === CONFIGURATION ===
-const CONFIG = {
-    excelFileName: 'Copy of Contractors staff list.xlsx',
-    defaultTimeout: 15000,
-    humanDelayBase: 1000,
-    humanDelayVariation: 500,
-    // FIXED: Default to work profile instead of personal
-    defaultProfile: 'Profile 1' // This is your work email profile
-};
+// === STEP 1: CHECK IF CHROME IS RUNNING ===
+function checkChromeProcesses() {
+    console.log('🔍 STEP 1: Checking if Chrome is running...\n');
 
-// === CHROME PROFILE DETECTION AND LISTING ===
-function findChromeProfilePath() {
-    let userDataDir;
+    return new Promise((resolve) => {
+        let command;
 
-    switch (os.platform()) {
-        case 'win32': // Windows
-            userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
-            break;
-        case 'darwin': // macOS
-            userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
-            break;
-        case 'linux': // Linux
-            userDataDir = path.join(os.homedir(), '.config', 'google-chrome');
-            break;
-        default:
-            throw new Error('❌ Unsupported operating system');
-    }
+        switch (os.platform()) {
+            case 'win32':
+                command = 'tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV';
+                break;
+            case 'darwin':
+                command = 'ps aux | grep -i "Google Chrome" | grep -v grep';
+                break;
+            case 'linux':
+                command = 'ps aux | grep -i chrome | grep -v grep';
+                break;
+            default:
+                console.log('❓ Cannot check Chrome processes on this OS');
+                resolve(false);
+                return;
+        }
 
-    // Validate existence
-    if (!fs.existsSync(userDataDir)) {
-        throw new Error(`❌ Chrome profile directory not found at: ${userDataDir}`);
-    }
+        exec(command, (error, stdout, stderr) => {
+            const isRunning = stdout.includes('chrome') || stdout.includes('Chrome');
 
-    return { userDataDir };
+            if (isRunning) {
+                console.log('❌ Chrome is STILL RUNNING!');
+                console.log('🔧 YOU MUST close ALL Chrome windows first\n');
+
+                if (os.platform() === 'win32') {
+                    console.log('💡 Windows: Check Task Manager and end all chrome.exe processes');
+                    console.log('   Or run: taskkill /F /IM chrome.exe');
+                } else if (os.platform() === 'darwin') {
+                    console.log('💡 Mac: Command+Option+Esc → Force quit Google Chrome');
+                    console.log('   Or run: killall "Google Chrome"');
+                } else {
+                    console.log('💡 Linux: Run: pkill chrome');
+                }
+
+                console.log('\n🛑 STOP: Close Chrome completely and run this script again!\n');
+            } else {
+                console.log('✅ Chrome is not running - Good!\n');
+            }
+
+            resolve(isRunning);
+        });
+    });
 }
 
-function listChromeProfiles() {
-    console.log('📋 Your Chrome Profiles:\n');
-    const { userDataDir } = findChromeProfilePath();
-    const profiles = {};
+// === STEP 2: FIND ACTUAL CHROME PROFILE PATH ===
+function findAndVerifyProfilePath() {
+    console.log('🔍 STEP 2: Finding and verifying Chrome profile path...\n');
+
+    // Try multiple possible paths
+    const possiblePaths = [];
+
+    if (os.platform() === 'win32') {
+        possiblePaths.push(
+            path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data'),
+            path.join(os.homedir(), 'AppData', 'Roaming', 'Google', 'Chrome', 'User Data'),
+            path.join('C:', 'Users', os.userInfo().username, 'AppData', 'Local', 'Google', 'Chrome', 'User Data')
+        );
+    } else if (os.platform() === 'darwin') {
+        possiblePaths.push(
+            path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+        );
+    } else {
+        possiblePaths.push(
+            path.join(os.homedir(), '.config', 'google-chrome'),
+            path.join(os.homedir(), '.config', 'chromium')
+        );
+    }
+
+    console.log('📁 Checking possible Chrome paths:');
+    console.log('═══════════════════════════════════════');
+
+    let validPath = null;
+
+    for (const testPath of possiblePaths) {
+        const exists = fs.existsSync(testPath);
+        console.log(`${exists ? '✅' : '❌'} ${testPath}`);
+
+        if (exists && !validPath) {
+            // Verify it has profiles
+            try {
+                const contents = fs.readdirSync(testPath);
+                const hasProfiles = contents.some(item =>
+                    item === 'Default' || item.startsWith('Profile')
+                );
+
+                if (hasProfiles) {
+                    validPath = testPath;
+                    console.log(`   📂 Contains profiles: ${contents.filter(item =>
+                        item === 'Default' || item.startsWith('Profile')
+                    ).join(', ')}`);
+                }
+            } catch (e) {
+                console.log(`   ❌ Cannot read directory: ${e.message}`);
+            }
+        }
+    }
+
+    if (validPath) {
+        console.log(`\n🎯 FOUND valid Chrome profile path: ${validPath}\n`);
+        return validPath;
+    } else {
+        console.log('\n❌ NO valid Chrome profile path found!');
+        console.log('🔧 SOLUTIONS:');
+        console.log('1. Install Google Chrome');
+        console.log('2. Open Chrome at least once to create profiles');
+        console.log('3. Check if Chrome is installed in a custom location\n');
+        return null;
+    }
+}
+
+// === STEP 3: VERIFY SPECIFIC PROFILE ===
+function verifySpecificProfile(userDataDir, profileName) {
+    console.log(`🔍 STEP 3: Verifying profile "${profileName}"...\n`);
+
+    const profilePath = path.join(userDataDir, profileName);
+
+    console.log(`📂 Checking: ${profilePath}`);
+
+    if (!fs.existsSync(profilePath)) {
+        console.log('❌ Profile directory does NOT exist!');
+
+        // List what profiles actually exist
+        try {
+            const actualProfiles = fs.readdirSync(userDataDir)
+                .filter(item => {
+                    const itemPath = path.join(userDataDir, item);
+                    return fs.statSync(itemPath).isDirectory() &&
+                        (item === 'Default' || item.startsWith('Profile'));
+                });
+
+            console.log('📋 Available profiles:');
+            actualProfiles.forEach(profile => console.log(`   - ${profile}`));
+
+            return { exists: false, actualProfiles };
+        } catch (e) {
+            console.log('❌ Cannot read profile directory');
+            return { exists: false, actualProfiles: [] };
+        }
+    }
+
+    // Check if profile has preferences
+    const prefsPath = path.join(profilePath, 'Preferences');
+    const hasPrefs = fs.existsSync(prefsPath);
+
+    console.log(`✅ Profile directory exists: ${profilePath}`);
+    console.log(`${hasPrefs ? '✅' : '❌'} Has Preferences file: ${hasPrefs}`);
+
+    if (hasPrefs) {
+        try {
+            const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+            const profileInfo = prefs.profile || {};
+            const accountInfo = prefs.account_info || [];
+
+            console.log('📋 Profile details:');
+            console.log(`   Name: ${profileInfo.name || 'Not set'}`);
+            console.log(`   Accounts: ${accountInfo.length > 0 ?
+                accountInfo.map(acc => acc.email || acc.gaia_id).join(', ') : 'None'}`);
+        } catch (e) {
+            console.log('⚠️  Could not read profile preferences');
+        }
+    }
+
+    console.log('');
+    return { exists: true, hasPrefs, profilePath };
+}
+
+// === STEP 4: TEST CHROME WITH MANUAL COMMAND ===
+function generateManualCommand(userDataDir, profileName) {
+    console.log('🔍 STEP 4: Manual Chrome command test...\n');
+
+    let chromePath;
+    let command;
+
+    if (os.platform() === 'win32') {
+        chromePath = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"';
+        command = `${chromePath} --user-data-dir="${userDataDir}" --profile-directory="${profileName}" --new-window`;
+    } else if (os.platform() === 'darwin') {
+        chromePath = '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"';
+        command = `${chromePath} --user-data-dir="${userDataDir}" --profile-directory="${profileName}" --new-window`;
+    } else {
+        chromePath = 'google-chrome';
+        command = `${chromePath} --user-data-dir="${userDataDir}" --profile-directory="${profileName}" --new-window`;
+    }
+
+    console.log('🧪 MANUAL TEST: Run this command in your terminal/command prompt:');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(command);
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('');
+    console.log('📋 This should:');
+    console.log('1. Open Chrome with the correct profile');
+    console.log('2. Show your login status');
+    console.log('3. Verify the profile is working');
+    console.log('');
+    console.log('❓ If this command works, the automation should work too');
+    console.log('❓ If this command fails, we need to fix the profile first\n');
+
+    return command;
+}
+
+// === STEP 5: TEST SELENIUM WITH CORRECTED SETTINGS ===
+async function testSeleniumWithProfile(userDataDir, profileName) {
+    console.log('🔍 STEP 5: Testing Selenium with corrected profile settings...\n');
+
+    let driver;
 
     try {
-        // 1. Read profiles from Local State
-        const localStatePath = path.join(userDataDir, 'Local State');
-        if (fs.existsSync(localStatePath)) {
-            try {
-                const localState = JSON.parse(fs.readFileSync(localStatePath, 'utf8'));
-                Object.assign(profiles, localState.profile?.info_cache || {});
-            } catch (e) {
-                console.log('⚠️  Could not parse Local State:', e.message);
+        const chromeOptions = new chrome.Options();
+
+        // === CRITICAL PROFILE SETTINGS ===
+        // Try different formats to see which works
+        console.log('🧪 Testing different argument formats...');
+
+        // Format 1: With quotes (Windows-friendly)
+        chromeOptions.addArguments(`--user-data-dir="${userDataDir}"`);
+        chromeOptions.addArguments(`--profile-directory=${profileName}`);
+
+        // Additional flags
+        chromeOptions.addArguments('--no-first-run');
+        chromeOptions.addArguments('--no-default-browser-check');
+        chromeOptions.addArguments('--disable-default-apps');
+        chromeOptions.addArguments('--disable-infobars');
+        chromeOptions.addArguments('--disable-extensions');
+
+        // Minimal stealth (for testing)
+        chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+        chromeOptions.excludeSwitches(['enable-automation']);
+
+        console.log('📋 Chrome arguments:');
+        console.log(`   --user-data-dir="${userDataDir}"`);
+        console.log(`   --profile-directory=${profileName}`);
+        console.log('');
+
+        console.log('🚀 Creating Selenium driver...');
+        driver = await new Builder()
+            .forBrowser('chrome')
+            .setChromeOptions(chromeOptions)
+            .build();
+
+        console.log('✅ Driver created successfully!');
+
+        // Test navigation
+        console.log('🌐 Testing navigation...');
+        await driver.get('chrome://version/');
+        await driver.sleep(2000);
+
+        // Check profile info
+        const pageText = await driver.executeScript('return document.documentElement.innerText;');
+
+        if (pageText.includes(profileName)) {
+            console.log(`✅ SUCCESS! Profile "${profileName}" is being used by Selenium!`);
+        } else {
+            console.log(`❌ FAILED! Profile "${profileName}" is NOT being used`);
+            console.log('📋 Page shows:');
+            console.log(pageText.substring(0, 500) + '...');
+        }
+
+        // Test Rivo Safeguard
+        console.log('\n🌐 Testing Rivo Safeguard login...');
+        await driver.get('https://www.rivosafeguard.com/insight/');
+        await driver.sleep(5000);
+
+        // Check for login elements
+        try {
+            await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
+            console.log('✅ SUCCESS! Found login elements - Profile has active session!');
+            console.log('🎉 PROFILE IS WORKING WITH SELENIUM!');
+            return true;
+        } catch (error) {
+            console.log('❌ Login elements not found - Profile not logged in or wrong profile');
+            console.log('💡 Solution: Log into Rivo Safeguard with this profile first');
+            return false;
+        }
+
+    } catch (error) {
+        console.log(`❌ Selenium test failed: ${error.message}`);
+
+        if (error.message.includes('user data directory is already in use')) {
+            console.log('🔧 Solution: Chrome is still running - close it completely');
+        } else if (error.message.includes('cannot find Chrome binary')) {
+            console.log('🔧 Solution: Chrome is not installed or not in PATH');
+        } else {
+            console.log('🔧 Solution: Check the manual command first');
+        }
+
+        return false;
+
+    } finally {
+        if (driver) {
+            console.log('\n⏰ Keeping browser open for 10 seconds to verify...');
+            await driver.sleep(10000);
+            await driver.quit();
+            console.log('✅ Test browser closed');
+        }
+    }
+}
+
+function getWorkingProfileSettings() {
+    let chromePath = null;
+    let userDataDir = null;
+
+    if (os.platform() === 'darwin') {
+        // macOS - We know this works for you
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
+    } else if (os.platform() === 'win32') {
+        // Windows - Standard paths
+        const possibleChromePaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+        ];
+
+        // Find which Chrome path exists
+        for (const testPath of possibleChromePaths) {
+            if (fs.existsSync(testPath)) {
+                chromePath = testPath;
+                break;
             }
         }
 
-        // 2. Scan actual profile directories
-        fs.readdirSync(userDataDir).forEach(dir => {
-            const dirPath = path.join(userDataDir, dir);
-            if (fs.statSync(dirPath).isDirectory() &&
-                (dir === 'Default' || dir.startsWith('Profile'))) {
-                if (!profiles[dir]) {
-                    profiles[dir] = {
-                        name: dir,
-                        user_name: 'Not in Local State'
-                    };
-                }
-            }
-        });
-
-        console.log('🎭 Found these profiles:');
-        console.log('═══════════════════════════════════════');
-
-        Object.keys(profiles).forEach((profileKey, index) => {
-            const profile = profiles[profileKey];
-            const name = profile.name || 'Unnamed Profile';
-            const email = profile.user_name || 'No account linked';
-
-            // ADDED: Highlight the work profile
-            const isWorkProfile = profileKey === 'Profile 1';
-            const indicator = isWorkProfile ? '👔 WORK' : '   ';
-
-            console.log(`${index + 1}. Profile: "${profileKey}" ${indicator}`);
-            console.log(`   📛 Display Name: ${name}`);
-            console.log(`   📧 Account: ${email}`);
-            console.log(`   🔧 Usage: --profile-directory=${profileKey}`);
-            console.log('───────────────────────────────────────');
-        });
-
-        console.log('\n💡 TIP: Profile 1 (work email) is recommended for Rivo Safeguard\n');
-        return Object.keys(profiles);
-
-    } catch (error) {
-        console.log('⚠️  Error listing profiles:', error.message);
-        console.log('📋 Using common profile names\n');
-        return ['Default', 'Profile 1', 'Profile 2', 'Profile 3'];
+        userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+    } else {
+        // Linux
+        chromePath = 'google-chrome'; // Usually in PATH
+        userDataDir = path.join(os.homedir(), '.config', 'google-chrome');
     }
+
+    console.log(`🔍 Platform: ${os.platform()}`);
+    console.log(`📁 Chrome: ${chromePath}`);
+    console.log(`📂 User Data: ${userDataDir}`);
+
+    // Verify paths exist
+    if (chromePath && chromePath !== 'google-chrome' && !fs.existsSync(chromePath)) {
+        console.warn(`⚠️  Chrome not found at: ${chromePath}`);
+    }
+
+    if (!fs.existsSync(userDataDir)) {
+        console.warn(`⚠️  User data not found at: ${userDataDir}`);
+    }
+
+    return { chromePath, userDataDir };
 }
 
-// === STEALTH CHROME DRIVER CREATION ===
-async function createStealthChromeDriver(profileName = CONFIG.defaultProfile) {
-    console.log(`🕵️  Creating stealth Chrome driver with profile: "${profileName}"...`);
-    const chromeOptions = new chrome.Options();
-    const { userDataDir } = findChromeProfilePath();
+async function createWorkingProfileDriver(profileName = 'Profile 1') {
+    console.log(`🔧 Creating working Chrome driver with Profile: "${profileName}"...`);
 
-    // Validate profile exists
-    const profilePath = path.join(userDataDir, profileName);
-    if (!fs.existsSync(profilePath)) {
-        console.error(`❌ Profile directory not found: ${profilePath}`);
-        console.log('📋 Available profiles:');
-        listChromeProfiles();
-        throw new Error(`Profile "${profileName}" not found`);
+    const { chromePath, userDataDir } = getWorkingProfileSettings();
+    const chromeOptions = new chrome.Options();
+
+    // === SET CHROME BINARY (IMPORTANT FOR MAC) ===
+    if (chromePath && chromePath !== 'google-chrome') {
+        chromeOptions.setChromeBinaryPath(chromePath);
+        console.log(`🎯 Using Chrome binary: ${chromePath}`);
     }
 
-    // === CRITICAL PROFILE ARGUMENTS ===
-    // FIXED: Added quotes for Windows paths with spaces
-    chromeOptions.addArguments(`--user-data-dir="${userDataDir}"`);
+    // === PROFILE SETTINGS (EXACT SAME AS YOUR WORKING MANUAL COMMAND) ===
+    chromeOptions.addArguments(`--user-data-dir=${userDataDir}`);
     chromeOptions.addArguments(`--profile-directory=${profileName}`);
 
-    // ADDED: Additional profile flags for better compatibility
+    // === ESSENTIAL FLAGS ===
+    chromeOptions.addArguments('--new-window');
     chromeOptions.addArguments('--no-first-run');
     chromeOptions.addArguments('--no-default-browser-check');
     chromeOptions.addArguments('--disable-default-apps');
@@ -134,721 +383,319 @@ async function createStealthChromeDriver(profileName = CONFIG.defaultProfile) {
     chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
     chromeOptions.excludeSwitches(['enable-automation']);
     chromeOptions.addArguments('--disable-infobars');
-    chromeOptions.addArguments('--disable-extensions');
-    chromeOptions.addArguments('--disable-dev-shm-usage');
-    chromeOptions.addArguments('--no-sandbox');
     chromeOptions.addArguments('--disable-web-security');
-    chromeOptions.addArguments('--disable-features=VizDisplayCompositor');
-    chromeOptions.addArguments('--disable-ipc-flooding-protection');
-
-    // === USER AGENT SPOOFING ===
-    chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+    chromeOptions.addArguments('--disable-extensions');
 
     // === PREFERENCES ===
     chromeOptions.setUserPreferences({
         'credentials_enable_service': false,
         'profile.password_manager_enabled': false,
-        'profile.default_content_setting_values.notifications': 2,
-        'profile.default_content_settings.popups': 0
+        'profile.default_content_setting_values.notifications': 2
     });
 
-    console.log(`📁 Profile path: ${profilePath}`);
-    console.log(`📂 Using profile: ${profileName} (${profileName === 'Profile 1' ? 'Work Account' : 'Personal Account'})`);
+    console.log(`📂 Profile directory: ${profileName}`);
+    console.log(`📁 User data directory: ${userDataDir}`);
 
-    // === CREATE DRIVER ===
+    try {
+        const driver = await new Builder()
+            .forBrowser('chrome')
+            .setChromeOptions(chromeOptions)
+            .build();
+
+        // === STEALTH INJECTION ===
+        await driver.executeScript(`
+            // Remove webdriver property
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+            });
+            
+            // Delete automation indicators
+            delete window.navigator.webdriver;
+            delete window.webdriver;
+            delete window.domAutomation;
+            delete window.domAutomationController;
+        `);
+
+        console.log('✅ Working profile driver created successfully!\n');
+        return driver;
+
+    } catch (error) {
+        console.error('❌ Failed to create driver:', error.message);
+
+        if (error.message.includes('user data directory is already in use')) {
+            console.log('🔧 Solution: Close ALL Chrome windows first');
+        } else if (error.message.includes('cannot find Chrome binary')) {
+            console.log('🔧 Solution: Install Chrome or check installation path');
+        }
+
+        throw error;
+    }
+}
+
+// === STEP 6: GENERATE WORKING AUTOMATION CODE ===
+function generateWorkingCode(userDataDir, profileName) {
+    console.log('🔍 STEP 6: Generating working automation code...\n');
+
+    const workingCode = `
+// WORKING CHROME PROFILE AUTOMATION
+// This uses your verified profile settings
+
+const { Builder, By, Key, until } = require('selenium-webdriver');
+const chrome = require('selenium-webdriver/chrome');
+
+async function createWorkingProfileDriver() {
+    console.log('🔑 Creating driver with WORKING profile settings...');
+    
+    const chromeOptions = new chrome.Options();
+    
+    // === VERIFIED PROFILE SETTINGS ===
+    // chromeOptions.addArguments('--user-data-dir="${userDataDir.replace(/\\/g, '\\\\')}');
+    chromeOptions.addArguments('--profile-directory=${profileName}');
+    
+    // === ESSENTIAL FLAGS ===
+    chromeOptions.addArguments('--no-first-run');
+    chromeOptions.addArguments('--no-default-browser-check');
+    chromeOptions.addArguments('--disable-default-apps');
+    
+    // === STEALTH SETTINGS ===
+    chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+    chromeOptions.excludeSwitches(['enable-automation']);
+    chromeOptions.addArguments('--disable-infobars');
+    
+    console.log('📁 User Data Dir: ${userDataDir}');
+    console.log('📂 Profile: ${profileName}');
+    
     const driver = await new Builder()
         .forBrowser('chrome')
         .setChromeOptions(chromeOptions)
         .build();
-
-    // === INJECT STEALTH SCRIPTS ===
-    await driver.executeScript(`
-        // Remove webdriver property
+    
+    // Hide automation
+    await driver.executeScript(\`
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined,
         });
-        
-        // Delete automation indicators
-        delete window.navigator.webdriver;
-        delete window.webdriver;
-        delete window.domAutomation;
-        delete window.domAutomationController;
-        
-        // Override navigator properties
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5],
-        });
-        
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en'],
-        });
-        
-        // Add chrome object if needed
-        if (navigator.userAgent.includes('Chrome')) {
-            window.chrome = {
-                runtime: {},
-                loadTimes: function() { return {}; },
-                csi: function() { return {}; },
-                app: {}
-            };
-        }
-    `);
-
-    // ADDED: Verify profile is actually being used
-    try {
-        await driver.get('chrome://version/');
-        await driver.sleep(1000);
-        const profileInfo = await driver.executeScript('return document.documentElement.innerText;');
-        if (profileInfo.includes(profileName)) {
-            console.log('✅ Profile verification: Chrome is using the correct profile!');
-        } else {
-            console.log('⚠️  Profile verification: Could not confirm profile usage');
-        }
-    } catch (e) {
-        console.log('⚠️  Could not verify profile, continuing...');
-    }
-
-    console.log('✅ Stealth Chrome driver ready with your profile!\n');
+    \`);
+    
+    console.log('✅ Working profile driver created!');
     return driver;
 }
 
-// === EXCEL DATA PROCESSING ===
-function findColumnIndex(headers, possibleNames) {
-    for (let i = 0; i < headers.length; i++) {
-        const header = headers[i] ? headers[i].toString().toLowerCase().trim() : '';
-        if (possibleNames.some(name => header.includes(name))) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-function loadContractorsFromExcel(mode = 'single') {
-    console.log('📁 Loading contractor data from Excel...');
-
-    if (!fs.existsSync(CONFIG.excelFileName)) {
-        throw new Error(`❌ Excel file not found: ${CONFIG.excelFileName}`);
-    }
-
-    const workbook = XLSX.readFile(CONFIG.excelFileName);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-    if (!rawData || rawData.length < 2) {
-        throw new Error('❌ Excel file appears to be empty or has no data rows');
-    }
-
-    // Find column indices
-    const headers = rawData[0] || [];
-    const codeIndex = 0; // Assuming first column is always code
-    const firstNameIndex = findColumnIndex(headers, ['first name', 'firstname', 'forename']);
-    const lastNameIndex = findColumnIndex(headers, ['last name', 'lastname', 'surname']);
-    const departmentIndex = findColumnIndex(headers, ['department', 'dept']);
-
-    console.log('📊 Column mapping:');
-    console.log(`   Code: Column ${codeIndex} (${headers[codeIndex] || 'NOT FOUND'})`);
-    console.log(`   First Name: Column ${firstNameIndex} (${headers[firstNameIndex] || 'NOT FOUND'})`);
-    console.log(`   Last Name: Column ${lastNameIndex} (${headers[lastNameIndex] || 'NOT FOUND'})`);
-    console.log(`   Department: Column ${departmentIndex} (${headers[departmentIndex] || 'NOT FOUND'})`);
-
-    if (firstNameIndex === -1 || lastNameIndex === -1 || departmentIndex === -1) {
-        throw new Error('❌ Required columns not found. Need: First Name, Last Name, Department');
-    }
-
-    const contractors = [];
-
-    // Process data rows
-    for (let i = 1; i < rawData.length; i++) {
-        const row = rawData[i];
-        if (row && row[codeIndex] && row[firstNameIndex] && row[lastNameIndex]) {
-            const code = row[codeIndex].toString().trim();
-            const firstName = row[firstNameIndex].toString().trim();
-            const lastName = row[lastNameIndex].toString().trim();
-            const department = row[departmentIndex] ? row[departmentIndex].toString().trim() : '';
-
-            if (department.toLowerCase() === 'security') {
-                const fullName = `${firstName} ${lastName}`;
-                const username = `${code}_${firstName}_${lastName}`.toLowerCase().replace(/\s+/g, '_');
-
-                contractors.push({
-                    code: code,
-                    fullName: fullName,
-                    firstName: firstName,
-                    lastName: lastName,
-                    department: department || 'Security',
-                    username: username,
-                    password: username
-                });
-
-                // If single mode, return first contractor
-                if (mode === 'single') {
-                    console.log(`👤 Selected contractor: ${fullName} (${username})\n`);
-                    return contractors[0];
-                }
-            }
-        }
-    }
-
-    if (contractors.length === 0) {
-        throw new Error('❌ No Security department contractors found in Excel file');
-    }
-
-    if (mode === 'all') {
-        console.log(`👥 Loaded ${contractors.length} Security contractors\n`);
-        return contractors;
-    }
-
-    return contractors[0]; // Default to first contractor
-}
-
-// === HUMAN-LIKE AUTOMATION UTILITIES ===
-class HumanAutomator {
-    constructor(driver) {
-        this.driver = driver;
-    }
-
-    async humanDelay(baseMs = CONFIG.humanDelayBase, variationMs = CONFIG.humanDelayVariation) {
-        const randomVariation = Math.random() * variationMs * 2 - variationMs;
-        let totalDelay = Math.max(baseMs + randomVariation, 200);
-
-        // 5% chance of longer "thinking" pause
-        if (Math.random() < 0.05) {
-            totalDelay += Math.random() * 2000;
-            console.log(`   🤔 Taking a thinking pause... (${Math.round(totalDelay)}ms)`);
-        }
-
-        await this.driver.sleep(totalDelay);
-    }
-
-    async humanType(element, text, avgDelay = 80) {
-        await element.clear();
-        await this.humanDelay(300, 200);
-
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-
-            // 1% chance of typing mistake
-            if (Math.random() < 0.01 && i > 0) {
-                const wrongChar = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-                await element.sendKeys(wrongChar);
-                await this.driver.sleep(100 + Math.random() * 200);
-                await element.sendKeys(Key.BACK_SPACE);
-                await this.driver.sleep(50 + Math.random() * 100);
-            }
-
-            await element.sendKeys(char);
-            await this.driver.sleep(avgDelay + (Math.random() * 40 - 20));
-        }
-
-        await this.humanDelay(200, 100);
-    }
-
-    async safeClick(selector, description, timeout = CONFIG.defaultTimeout) {
-        let attempts = 3;
-        while (attempts > 0) {
-            try {
-                console.log(`   🖱️  Clicking: ${description}`);
-                const element = await this.driver.wait(until.elementLocated(selector), timeout);
-                await this.driver.wait(until.elementIsEnabled(element), 5000);
-
-                // Move mouse to element area
-                const actions = this.driver.actions({ bridge: true });
-                await actions.move({ origin: element, x: Math.random() * 10 - 5, y: Math.random() * 10 - 5 }).perform();
-                await this.humanDelay(150, 75);
-
-                await element.click();
-                console.log(`   ✅ Successfully clicked: ${description}`);
-                await this.humanDelay(300, 150);
-                return element;
-
-            } catch (error) {
-                attempts--;
-                console.log(`   ⚠️  Click failed for ${description}, ${attempts} attempts remaining`);
-                if (attempts === 0) {
-                    throw new Error(`Failed to click ${description}: ${error.message}`);
-                }
-                await this.humanDelay(1000, 500);
-            }
-        }
-    }
-
-    async safeInput(selector, text, description, timeout = CONFIG.defaultTimeout) {
-        try {
-            console.log(`   ✏️  Entering: ${description}`);
-            const element = await this.driver.wait(until.elementLocated(selector), timeout);
-            await this.driver.wait(until.elementIsEnabled(element), 5000);
-
-            await element.click();
-            await this.humanDelay(300, 150);
-            await this.humanType(element, text);
-
-            // Validate input
-            const actualValue = await element.getAttribute('value');
-            if (actualValue !== text) {
-                console.log(`   ⚠️  Input validation warning. Expected: "${text}", Got: "${actualValue}"`);
-            }
-
-            console.log(`   ✅ Successfully entered: ${description}`);
-            return element;
-
-        } catch (error) {
-            throw new Error(`Failed to enter text in ${description}: ${error.message}`);
-        }
-    }
-
-    async safeSelectOption(dropdownSelector, optionText, description, timeout = CONFIG.defaultTimeout) {
-        try {
-            console.log(`   📋 Selecting "${optionText}" in: ${description}`);
-            const dropdown = await this.driver.wait(until.elementLocated(dropdownSelector), timeout);
-            await this.driver.wait(until.elementIsEnabled(dropdown), 5000);
-
-            const options = await dropdown.findElements(By.xpath(`//option[normalize-space(text()) = '${optionText}']`));
-            if (options.length === 0) {
-                console.log(`   ⚠️  Option "${optionText}" not found in ${description}, continuing...`);
-                return dropdown;
-            }
-
-            await options[0].click();
-            console.log(`   ✅ Successfully selected: ${optionText}`);
-            await this.humanDelay(500, 250);
-            return dropdown;
-
-        } catch (error) {
-            console.log(`   ⚠️  Failed to select option in ${description}: ${error.message}`);
-            return null;
-        }
-    }
-}
-
-// === MAIN USER CREATION AUTOMATION ===
-async function createUser(driver, contractor, automator) {
-    const startTime = Date.now();
-
-    try {
-        console.log(`\n👤 Creating user: ${contractor.username} (${contractor.fullName})`);
-
-        // Navigate to user creation
-        console.log('🧭 Navigating to user creation...');
-        await automator.safeClick(By.css(".sch-container-left"), "Left container");
-        await automator.safeClick(By.css(".sch-app-launcher-button"), "App launcher");
-        await automator.safeClick(By.css(".sch-link-title:nth-child(6) > .sch-link-title-text"), "Menu item");
-        await automator.safeClick(By.css(".k-drawer-item:nth-child(6)"), "User management");
-
-        // Switch to frame
-        console.log('🖼️  Switching to user creation frame...');
-        await driver.switchTo().frame(0);
-        await automator.humanDelay(2000, 1000);
-
-        // Fill basic information
-        console.log('📝 Filling basic user information...');
-        await automator.safeInput(By.id("Username"), contractor.username, "Username");
-        await automator.safeInput(By.name("Password"), contractor.password, "Password");
-        await automator.safeInput(By.name("JobTitle"), contractor.department, "Job Title");
-        await automator.safeInput(By.id("Attributes.People.Forename"), contractor.firstName, "First Name");
-        await automator.safeInput(By.id("Attributes.People.Surname"), contractor.lastName, "Last Name");
-        await automator.safeInput(By.id("Attributes.Users.EmployeeNumber"), contractor.code, "Employee Number");
-
-        // Handle hierarchy configuration
-        console.log('🏢 Configuring hierarchy...');
-        try {
-            await automator.safeClick(By.id("Hierarchies01zzz"), "Hierarchy button");
-            await automator.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Hierarchy dropdown");
-            await automator.safeClick(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)"), "Hierarchy lookup");
-
-            // Optional home location
-            try {
-                await automator.safeClick(By.css("#\\31 657_HomeLocationHierarchy > option:nth-child(2)"), "Home location");
-            } catch (e) {
-                console.log('   ⚠️  Home location not found, continuing...');
-            }
-
-            await automator.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Hierarchy dropdown 2");
-            await automator.safeClick(By.css(".HierarchyNode__SelectDiv-sc-1ytna50-2"), "Hierarchy node select");
-            await automator.safeClick(By.css(".DropdownDisplay__DropdownText-sc-6p7u3y-0 > span:nth-child(1)"), "Dropdown text");
-
-            // Hierarchy tree navigation
-            try {
-                await automator.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Hierarchy arrow 1");
-                await automator.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Hierarchy arrow 2");
-                await automator.safeClick(By.css(".HierarchyNode__NodeText-sc-1ytna50-1"), "Hierarchy node text");
-            } catch (e) {
-                console.log('   ⚠️  Hierarchy tree navigation failed, continuing...');
-            }
-
-            await automator.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups");
-            await automator.safeClick(By.css("#OverlayContainer > .StandardButton"), "Overlay confirm");
-
-        } catch (error) {
-            console.log('   ⚠️  Some hierarchy operations failed, continuing...');
-        }
-
-        // Group management
-        console.log('👥 Managing groups and permissions...');
-        try {
-            // Group tab
-            try {
-                await automator.safeClick(By.id("GroupTabDiv_23890"), "Group tab");
-            } catch (e) {
-                console.log('   ⚠️  Group tab not found, continuing...');
-            }
-
-            // Password confirmation
-            await automator.safeInput(By.name("Password"), contractor.password, "Password confirmation");
-
-            await automator.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups 2");
-            await automator.safeClick(By.css("#ManageHierarchyUGroupLocationsForm > .GroupTab:nth-child(1)"), "Group tab form");
-
-            // Select user group
-            await automator.safeSelectOption(By.id("UGroupID"), "Third Party Staff", "User Group");
-
-            // Additional hierarchy selections
-            try {
-                await automator.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Final hierarchy dropdown");
-                await automator.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Final hierarchy arrow 1");
-                await automator.safeClick(By.css(".HierarchyNode__ArrowImg-sc-1ytna50-6"), "Final hierarchy arrow 2");
-                await automator.safeClick(By.css(".HierarchyNode__NodeText-sc-1ytna50-1"), "Final hierarchy node");
-                await automator.safeClick(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)"), "Final hierarchy lookup");
-            } catch (e) {
-                console.log('   ⚠️  Additional hierarchy selections failed, continuing...');
-            }
-
-        } catch (error) {
-            console.log('   ⚠️  Some group operations failed, continuing...');
-        }
-
-        // Final settings
-        console.log('⚙️  Configuring final settings...');
-        await automator.safeSelectOption(By.id("Attributes.Users.StatusOfEmployment"), "Current", "Employment Status");
-        await automator.safeSelectOption(By.id("UserTypeID"), "Limited access user", "User Type");
-
-        // Save user
-        console.log('💾 Saving user...');
-        await automator.safeClick(By.name("save"), "Save button");
-        await automator.humanDelay(5000, 2000);
-
-        const endTime = Date.now();
-        const totalTime = (endTime - startTime) / 1000;
-
-        console.log(`   ✅ Successfully created user: ${contractor.username}`);
-        console.log(`   ⏱️  Total time: ${totalTime.toFixed(1)} seconds`);
-
-        // Ensure minimum time for human-like behavior
-        if (totalTime < 35) {
-            const additionalDelay = (40 - totalTime) * 1000;
-            console.log(`   ⏳ Adding ${(additionalDelay / 1000).toFixed(1)}s delay for human-like timing...`);
-            await automator.humanDelay(additionalDelay, 1000);
-        }
-
-    } catch (error) {
-        console.error(`   ❌ Failed to create user ${contractor.username}: ${error.message}`);
-        throw error;
-    }
-}
-
-// === MAIN AUTOMATION FUNCTIONS ===
-async function runSingleUserTest(profileName = CONFIG.defaultProfile) {
+// Test the working driver
+async function testWorkingDriver() {
     let driver;
-
     try {
-        console.log('🧪 SINGLE USER TEST - Starting...\n');
-
-        // Load single contractor
-        const contractor = loadContractorsFromExcel('single');
-
-        // Create stealth driver
-        driver = await createStealthChromeDriver(profileName);
-        await driver.manage().window().setRect({ width: 1920, height: 1080 });
-
-        const automator = new HumanAutomator(driver);
-
-        // Navigate and check login
-        console.log('🌐 Navigating to Rivo Safeguard...');
+        driver = await createWorkingProfileDriver();
         await driver.get('https://www.rivosafeguard.com/insight/');
-        await automator.humanDelay(3000, 1500);
-
-        try {
-            await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
-            console.log('✅ Successfully using existing login!\n');
-        } catch (error) {
-            throw new Error('❌ Not logged in. Please log in to Chrome first.');
-        }
-
-        // Create user
-        await createUser(driver, contractor, automator);
-
-        console.log('\n🎉 Single user test completed successfully!');
-
+        console.log('🎉 Profile automation is working!');
+        await driver.sleep(5000);
     } catch (error) {
-        console.error(`\n❌ Single user test failed: ${error.message}`);
-        throw error;
+        console.error('❌ Error:', error.message);
     } finally {
-        if (driver) {
-            console.log('\n⏰ Keeping browser open for 10 seconds to review...');
-            await driver.sleep(10000);
-            await driver.quit();
-            console.log('✅ Browser closed');
-        }
+        if (driver) await driver.quit();
     }
 }
 
-async function runAllUsersAutomation(profileName = CONFIG.defaultProfile) {
-    let driver;
+// Export for use in your main script
+module.exports = { createWorkingProfileDriver, testWorkingDriver };
+
+// Run test if called directly
+if (require.main === module) {
+    testWorkingDriver();
+}
+`;
+
+    // Save the working code
+    fs.writeFileSync('working-profile-driver.js', workingCode);
+
+    console.log('✅ Working code saved as: working-profile-driver.js');
+    console.log('🧪 Test it: node working-profile-driver.js');
+    console.log('📝 Use createWorkingProfileDriver() in your main script\n');
+}
+
+// === MAIN DIAGNOSTIC FUNCTION ===
+async function runCompleteProfileDiagnostic() {
+    console.log('🏥 COMPLETE PROFILE DIAGNOSTIC');
+    console.log('═══════════════════════════════════════\n');
+    console.log('This will fix your Chrome profile issue step by step\n');
 
     try {
-        console.log('🚀 ALL USERS AUTOMATION - Starting...\n');
+        // Step 1: Check Chrome processes
+        const chromeRunning = await checkChromeProcesses();
+        if (chromeRunning) {
+            console.log('🛑 STOP HERE: Close Chrome first!\n');
+            return;
+        }
 
-        // Load all contractors
-        const contractors = loadContractorsFromExcel('all');
-        console.log(`📊 Found ${contractors.length} Security contractors to create`);
-        console.log(`⏱️  Estimated time: ${(contractors.length * 45 / 60).toFixed(1)} minutes\n`);
+        // Step 2: Find profile path
+        const userDataDir = findAndVerifyProfilePath();
+        if (!userDataDir) {
+            console.log('🛑 STOP HERE: Fix Chrome installation first!\n');
+            return;
+        }
 
-        // Show first few contractors
-        console.log('👥 First 5 contractors to be created:');
-        contractors.slice(0, 5).forEach((contractor, index) => {
-            console.log(`   ${index + 1}. ${contractor.fullName} -> ${contractor.username}`);
+        // Step 3: Verify Profile 1
+        const profile1Check = verifySpecificProfile(userDataDir, 'Profile 1');
+
+        let profileToUse = 'Profile 1';
+        if (!profile1Check.exists && profile1Check.actualProfiles) {
+            console.log('❌ Profile 1 not found. Available profiles:');
+            profile1Check.actualProfiles.forEach(p => console.log(`   - ${p}`));
+
+            // Use first available profile
+            profileToUse = profile1Check.actualProfiles[0] || 'Default';
+            console.log(`🔄 Using "${profileToUse}" instead\n`);
+        }
+
+        // Step 4: Generate manual command
+        const manualCommand = generateManualCommand(userDataDir, profileToUse);
+
+        console.log('⏸️  PAUSE HERE: Test the manual command above');
+        console.log('❓ Did the manual command work? (y/n)');
+
+        const readline = require('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
         });
-        console.log('');
 
-        // Create stealth driver
-        driver = await createStealthChromeDriver(profileName);
-        await driver.manage().window().setRect({ width: 1920, height: 1080 });
-
-        const automator = new HumanAutomator(driver);
-
-        // Navigate and check login
-        console.log('🌐 Navigating to Rivo Safeguard...');
-        await driver.get('https://www.rivosafeguard.com/insight/');
-        await automator.humanDelay(3000, 1500);
-
-        try {
-            await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
-            console.log('✅ Successfully using existing login!\n');
-        } catch (error) {
-            throw new Error('❌ Not logged in. Please log in to Chrome first.');
-        }
-
-        // Create all users
-        for (let i = 0; i < contractors.length; i++) {
-            const contractor = contractors[i];
-
-            try {
-                console.log(`\n📊 Progress: ${i + 1}/${contractors.length}`);
-
-                if (i > 0) {
-                    // Navigate back to user creation for subsequent users
-                    await driver.switchTo().defaultContent();
-                    await automator.humanDelay(1000, 500);
-                    await automator.safeClick(By.css(".k-drawer-item:nth-child(6)"), "User management");
-                    await driver.switchTo().frame(0);
-                    await automator.humanDelay(2000, 1000);
-                }
-
-                await createUser(driver, contractor, automator);
-
-                console.log(`✅ Completed: ${i + 1}/${contractors.length} users created`);
-
-                // Delay between users
-                if (i < contractors.length - 1) {
-                    console.log('   🔄 Preparing for next user...');
-                    await automator.humanDelay(3000, 2000);
-                }
-
-            } catch (error) {
-                console.error(`❌ Failed to create user ${i + 1}: ${contractor.username}`);
-
-                // Ask user if they want to continue
-                const readline = require('readline');
-                const rl = readline.createInterface({
-                    input: process.stdin,
-                    output: process.stdout
-                });
-
-                const answer = await new Promise(resolve => {
-                    rl.question('❓ Do you want to continue with the next user? (y/n): ', resolve);
-                });
-                rl.close();
-
-                if (answer.toLowerCase() !== 'y') {
-                    console.log('🛑 Stopping automation as requested.');
-                    break;
-                }
-            }
-        }
-
-        console.log('\n🎉 All users automation completed!');
-
-    } catch (error) {
-        console.error(`\n❌ All users automation failed: ${error.message}`);
-        throw error;
-    } finally {
-        if (driver) {
-            console.log('\n⏰ Keeping browser open for 10 seconds to review...');
-            await driver.sleep(10000);
-            await driver.quit();
-            console.log('✅ Browser closed');
-        }
-    }
-}
-
-// === INTERACTIVE PROFILE SELECTOR ===
-async function selectProfileInteractively() {
-    const readline = require('readline');
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-
-    console.log('🎮 Interactive Profile Selector\n');
-
-    const availableProfiles = listChromeProfiles();
-
-    console.log('❓ Which profile would you like to use?');
-    availableProfiles.forEach((profile, index) => {
-        const isRecommended = profile === 'Profile 1';
-        console.log(`   ${index + 1}. ${profile} ${isRecommended ? '👔 (RECOMMENDED - Work Account)' : ''}`);
-    });
-    console.log(`   ${availableProfiles.length + 1}. Enter custom profile name`);
-
-    const choice = await new Promise(resolve => {
-        rl.question('\nEnter your choice (number): ', resolve);
-    });
-
-    let selectedProfile;
-    const choiceNum = parseInt(choice);
-
-    if (choiceNum >= 1 && choiceNum <= availableProfiles.length) {
-        selectedProfile = availableProfiles[choiceNum - 1];
-    } else if (choiceNum === availableProfiles.length + 1) {
-        selectedProfile = await new Promise(resolve => {
-            rl.question('Enter custom profile directory name: ', resolve);
+        const manualWorked = await new Promise(resolve => {
+            rl.question('Enter y if manual command worked, n if it failed: ', resolve);
         });
-    } else {
-        console.log('❌ Invalid choice. Using recommended profile (Profile 1).');
-        selectedProfile = 'Profile 1';
-    }
+        rl.close();
 
-    rl.close();
+        if (manualWorked.toLowerCase() !== 'y') {
+            console.log('\n❌ Manual command failed. Profile issues:');
+            console.log('1. Profile might not exist');
+            console.log('2. Chrome might not be installed correctly');
+            console.log('3. Permission issues');
+            console.log('\n🔧 Fix the manual command first, then run this diagnostic again\n');
+            return;
+        }
 
-    console.log(`✅ Selected profile: "${selectedProfile}"\n`);
-    return selectedProfile;
-}
+        // Step 5: Test Selenium
+        console.log('\n🧪 Manual command worked! Testing Selenium...\n');
+        const seleniumWorked = await testSeleniumWithProfile(userDataDir, profileToUse);
 
-// === MAIN ENTRY POINT ===
-async function main() {
-    const args = process.argv.slice(2);
+        if (seleniumWorked) {
+            // Step 6: Generate working code
+            generateWorkingCode(userDataDir, profileToUse);
 
-    console.log('🎯 CHROME PROFILE AUTOMATION TOOL\n');
-    console.log('🔑 Uses your existing Chrome profile with all logins\n');
-
-    try {
-        if (args.includes('--list-profiles') || args.includes('-l')) {
-            // List profiles only
-            console.log('📋 PROFILE LISTING MODE\n');
-            listChromeProfiles();
-
-        } else if (args.includes('--help') || args.includes('-h')) {
-            // Show help
-            console.log('📚 AVAILABLE COMMANDS:\n');
-            console.log('  node automation.js                    Run single user test with Profile 1 (recommended first)');
-            console.log('  node automation.js --all              Create ALL users from Excel with Profile 1');
-            console.log('  node automation.js --select-profile   Interactive profile selection');
-            console.log('  node automation.js --all --select-profile   Create all users with profile selection');
-            console.log('  node automation.js --list-profiles    List all Chrome profiles');
-            console.log('  node automation.js --help             Show this help\n');
-            console.log('📋 REQUIREMENTS:');
-            console.log('  ✅ Chrome browser installed');
-            console.log('  ✅ Excel file: "Copy of Contractors staff list.xlsx" in same folder');
-            console.log('  ✅ Already logged into https://www.rivosafeguard.com/insight/ in Profile 1');
-            console.log('  ✅ ALL Chrome windows closed before running\n');
-            console.log('💡 TIP: Profile 1 (melroy.rodrigues@contractors.bie.com.kw) is recommended for work access\n');
-
-        } else if (args.includes('--select-profile')) {
-            // Interactive profile selection
-            const selectedProfile = await selectProfileInteractively();
-
-            if (args.includes('--all')) {
-                console.log('⚠️  IMPORTANT: Make sure ALL Chrome windows are closed!\n');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                await runAllUsersAutomation(selectedProfile);
-            } else {
-                console.log('⚠️  IMPORTANT: Make sure ALL Chrome windows are closed!\n');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                await runSingleUserTest(selectedProfile);
-            }
-
-        } else if (args.includes('--all')) {
-            // Run all users with default profile (Profile 1)
-            console.log('🚀 ALL USERS MODE with Profile 1 (Work Account)\n');
-            console.log('🔍 Available Chrome profiles:');
-            listChromeProfiles();
-            console.log(`🎯 Using profile: "${CONFIG.defaultProfile}" (Work Account)\n`);
-
-            console.log('⚠️  IMPORTANT: Make sure ALL Chrome windows are closed!\n');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            await runAllUsersAutomation(CONFIG.defaultProfile);
+            console.log('🎉 DIAGNOSTIC COMPLETE - SUCCESS!\n');
+            console.log('📋 SUMMARY:');
+            console.log(`✅ Chrome profile path: ${userDataDir}`);
+            console.log(`✅ Working profile: ${profileToUse}`);
+            console.log(`✅ Manual command: Works`);
+            console.log(`✅ Selenium test: Works`);
+            console.log(`✅ Generated code: working-profile-driver.js`);
+            console.log('\n🚀 NEXT STEPS:');
+            console.log('1. Test: node working-profile-driver.js');
+            console.log('2. Replace your driver creation with the working version');
+            console.log('3. Run your automation normally\n');
 
         } else {
-            // Default: Single user test with Profile 1
-            console.log('🧪 SINGLE USER TEST MODE with Profile 1 (Work Account)\n');
-            console.log('🔍 Available Chrome profiles:');
-            listChromeProfiles();
-            console.log(`🎯 Using profile: "${CONFIG.defaultProfile}" (Work Account - Recommended)\n`);
-
-            console.log('⚠️  BEFORE RUNNING:');
-            console.log('1. ✅ Log into https://www.rivosafeguard.com/insight/ in Chrome Profile 1');
-            console.log('2. ✅ Close ALL Chrome browser windows');
-            console.log('3. ✅ Make sure Excel file is in this folder');
-            console.log('4. ✅ Press Enter to start...\n');
-
-            // Wait for user confirmation
-            process.stdin.setRawMode(true);
-            process.stdin.resume();
-            process.stdin.once('data', () => {
-                process.stdin.setRawMode(false);
-                runSingleUserTest(CONFIG.defaultProfile);
-            });
+            console.log('\n❌ Selenium test failed even though manual command worked');
+            console.log('🔧 This suggests a Selenium-specific issue');
+            console.log('💡 Try updating selenium-webdriver: npm update selenium-webdriver\n');
         }
 
     } catch (error) {
-        console.error('💥 Application failed:', error.message);
-
-        if (error.message.includes('user data directory is already in use')) {
-            console.log('\n💡 SOLUTION:');
-            console.log('1. Close ALL Chrome browser windows');
-            console.log('2. Wait 10 seconds');
-            console.log('3. Run this script again');
-        } else if (error.message.includes('Not logged in')) {
-            console.log('\n💡 SOLUTION:');
-            console.log('1. Open Chrome browser');
-            console.log('2. Switch to Profile 1 (melroy.rodrigues@contractors.bie.com.kw)');
-            console.log('3. Go to https://www.rivosafeguard.com/insight/');
-            console.log('4. Log in to your account');
-            console.log('5. Close ALL Chrome windows');
-            console.log('6. Run this script again');
-        } else if (error.message.includes('Profile') && error.message.includes('not found')) {
-            console.log('\n💡 SOLUTION:');
-            console.log('1. Run: node automation.js --list-profiles');
-            console.log('2. Choose an available profile');
-            console.log('3. Run: node automation.js --select-profile');
-        }
-
-        process.exit(1);
+        console.error('💥 Diagnostic failed:', error.message);
+        console.log('\n🔧 Try these solutions:');
+        console.log('1. Run as administrator/sudo');
+        console.log('2. Check Chrome installation');
+        console.log('3. Update Node.js and npm');
     }
 }
 
-// === RUN THE APPLICATION ===
-if (require.main === module) {
-    main();
+async function testWorkingProfile() {
+    let driver;
+
+    try {
+        console.log('🧪 Testing your working Profile 1...\n');
+
+        // Create driver with your working profile
+        driver = await createWorkingProfileDriver('Profile 1');
+        await driver.manage().window().setRect({ width: 1920, height: 1080 });
+
+        // Test 1: Verify profile
+        console.log('🔍 Step 1: Verifying profile...');
+        await driver.get('chrome://version/');
+        await driver.sleep(2000);
+
+        const versionInfo = await driver.executeScript('return document.documentElement.innerText;');
+        if (versionInfo.includes('Profile 1')) {
+            console.log('✅ Profile verification: Using Profile 1 correctly');
+        } else {
+            console.log('⚠️  Profile verification: May not be using Profile 1');
+        }
+
+        // Test 2: Check Rivo Safeguard login
+        console.log('\n🌐 Step 2: Testing Rivo Safeguard login...');
+        await driver.get('https://www.rivosafeguard.com/insight/');
+        await driver.sleep(5000);
+
+        try {
+            await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
+            console.log('✅ SUCCESS! Found login elements - You are logged in!');
+            console.log('🎉 PROFILE AUTOMATION IS WORKING!');
+
+            // Show current URL and title
+            const currentUrl = await driver.getCurrentUrl();
+            const title = await driver.getTitle();
+            console.log(`📄 Page: ${title}`);
+            console.log(`🔗 URL: ${currentUrl}`);
+
+            return true;
+
+        } catch (error) {
+            console.log('❌ Login elements not found');
+            console.log('💡 This means you need to log into Rivo Safeguard in Profile 1 first');
+
+            const currentUrl = await driver.getCurrentUrl();
+            console.log(`📄 Current URL: ${currentUrl}`);
+
+            return false;
+        }
+
+    } catch (error) {
+        console.error('❌ Test failed:', error.message);
+        return false;
+    } finally {
+        if (driver) {
+            console.log('\n👀 Keeping browser open for 10 seconds to verify...');
+            await driver.sleep(10000);
+            await driver.quit();
+            console.log('✅ Test browser closed');
+        }
+    }
 }
 
-// === EXPORTS ===
+
+// === RUN DIAGNOSTIC ===
+if (require.main === module) {
+    const args = process.argv.slice(2);
+
+    if (args.includes('--test')) {
+        console.log('🧪 TESTING MODE\n');
+        testWorkingProfile();
+    } else if (args.includes('--automation')) {
+        console.log('🤖 AUTOMATION MODE\n');
+        runCompleteAutomation();
+    } else {
+        console.log('🔧 WORKING CHROME PROFILE DRIVER\n');
+        console.log('📋 Available commands:');
+        console.log('  node working-driver.js --test        Test Profile 1');
+        console.log('  node working-driver.js --automation  Run full automation');
+        console.log('\n🚀 Running test by default...\n');
+        testWorkingProfile();
+    }
+}
+
 module.exports = {
-    createStealthChromeDriver,
-    listChromeProfiles,
-    loadContractorsFromExcel,
-    runSingleUserTest,
-    runAllUsersAutomation,
-    HumanAutomator
+    runCompleteProfileDiagnostic,
+    checkChromeProcesses,
+    findAndVerifyProfilePath,
+    verifySpecificProfile,
+    testSeleniumWithProfile
 };
