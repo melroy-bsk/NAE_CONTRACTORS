@@ -1,6 +1,6 @@
 // Standalone Test Script - No Mocha Required
 // Run with: node test-first-user-standalone.js
-
+const chrome = require('selenium-webdriver/chrome');  // ADD THIS LINE
 const { Builder, By, Key, until } = require('selenium-webdriver');
 const XLSX = require('xlsx');
 const fs = require('fs');
@@ -106,6 +106,47 @@ class TestUtilities {
     }
 }
 
+async function createStealthBrowser() {
+    console.log('🕵️  Creating stealth browser...');
+
+    const chromeOptions = new chrome.Options();
+
+    // Remove automation detection
+    chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+    chromeOptions.excludeSwitches(['enable-automation']);
+    chromeOptions.addArguments('--disable-infobars');
+    chromeOptions.addArguments('--disable-extensions');
+    chromeOptions.addArguments('--disable-dev-shm-usage');
+    chromeOptions.addArguments('--no-sandbox');
+    chromeOptions.addArguments('--disable-web-security');
+
+    // Real user agent
+    chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+
+    // Disable notifications
+    chromeOptions.setUserPreferences({
+        'profile.default_content_setting_values.notifications': 2
+    });
+
+    // Create driver
+    const driver = await new Builder()
+        .forBrowser('chrome')
+        .setChromeOptions(chromeOptions)
+        .build();
+
+    // Remove webdriver property
+    await driver.executeScript(`
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+        });
+        delete window.navigator.webdriver;
+        delete window.webdriver;
+    `);
+
+    console.log('✅ Stealth browser ready!');
+    return driver;
+}
+
 // Helper function to find column index by possible header names
 function findColumnIndex(headers, possibleNames) {
     for (let i = 0; i < headers.length; i++) {
@@ -203,7 +244,8 @@ async function createFirstUserTest() {
 
         // Initialize WebDriver
         console.log('🌐 Initializing browser...');
-        driver = await new Builder().forBrowser('firefox').build();
+        // driver = await new Builder().forBrowser('chrome').build();
+        driver = await createStealthBrowser();
         testUtils = new TestUtilities(driver);
 
         await driver.manage().window().setRect({ width: 1382, height: 736 });
