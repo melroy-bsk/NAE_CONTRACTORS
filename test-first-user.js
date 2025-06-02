@@ -16,25 +16,9 @@ const CONFIG = {
     defaultTimeout: 30000,
     humanDelayBase: 1500,
     humanDelayVariation: 1000,
-    useRealProfile: true,  // Use actual Chrome profile
-    profileName: 'Default' // Change to your profile name
+    profileMethod: 'remote-debugging', // 'remote-debugging' or 'profile-copy'
+    debugPort: 9222
 };
-
-// === CLOSE CHROME GRACEFULLY ===
-async function closeChrome() {
-    console.log('📌 Please close all Chrome windows manually...');
-
-    return new Promise((resolve) => {
-        const checkInterval = setInterval(async () => {
-            const isRunning = await isChromeRunning();
-            if (!isRunning) {
-                clearInterval(checkInterval);
-                console.log('✅ Chrome closed successfully');
-                resolve();
-            }
-        }, 1000);
-    });
-}
 
 // === CHECK IF CHROME IS RUNNING ===
 async function isChromeRunning() {
@@ -59,80 +43,186 @@ async function isChromeRunning() {
     });
 }
 
-// === GET REAL CHROME PROFILE PATH ===
-function getRealChromeProfilePath() {
-    let userDataDir;
+// === KILL ALL CHROME PROCESSES ===
+async function killAllChrome() {
+    console.log('🔄 Closing any existing Chrome instances...');
+
+    return new Promise((resolve) => {
+        let command;
+
+        switch (os.platform()) {
+            case 'win32':
+                command = 'taskkill /F /IM chrome.exe /T 2>nul';
+                break;
+            case 'darwin':
+                command = 'pkill -f "Google Chrome" 2>/dev/null';
+                break;
+            case 'linux':
+                command = 'pkill -f chrome 2>/dev/null';
+                break;
+        }
+
+        exec(command, () => {
+            setTimeout(resolve, 2000);
+        });
+    });
+}
+
+// === GET CHROME PATHS ===
+function getChromePaths() {
+    let chromePath, userDataDir;
 
     if (os.platform() === 'darwin') {
+        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
         userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
     } else if (os.platform() === 'win32') {
+        chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        if (!fs.existsSync(chromePath)) {
+            chromePath = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+        }
         userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
     } else {
+        chromePath = '/usr/bin/google-chrome';
         userDataDir = path.join(os.homedir(), '.config', 'google-chrome');
     }
 
-    return userDataDir;
+    return { chromePath, userDataDir };
 }
 
-// === CREATE NATURAL CHROME DRIVER ===
-async function createNaturalChromeDriver() {
-    console.log('🌟 Creating natural Chrome driver...\n');
+// === START CHROME WITH REMOTE DEBUGGING ===
+async function startChromeWithRemoteDebugging() {
+    console.log('🚀 Starting Chrome with remote debugging...\n');
+
+    const { chromePath, userDataDir } = getChromePaths();
+
+    // Kill any existing Chrome
+    await killAllChrome();
+
+    // Start Chrome with remote debugging
+    const chromeArgs = [
+        `--remote-debugging-port=${CONFIG.debugPort}`,
+        `--user-data-dir=${userDataDir}`,
+        '--no-first-run',
+        '--no-default-browser-check'
+    ];
+
+    return new Promise((resolve, reject) => {
+        exec(`"${chromePath}" ${chromeArgs.join(' ')}`, (error) => {
+            if (error && error.code !== null) {
+                reject(error);
+            }
+        });
+
+        // Give Chrome time to start
+        setTimeout(() => {
+            console.log('✅ Chrome started with remote debugging on port', CONFIG.debugPort);
+            console.log('📌 You can now use the browser normally\n');
+            resolve();
+        }, 3000);
+    });
+}
+
+// === CONNECT TO EXISTING CHROME ===
+async function connectToExistingChrome() {
+    console.log('🔌 Connecting to existing Chrome instance...\n');
+
+    const chromeOptions = new chrome.Options();
+    chromeOptions.addArguments(`--remote-debugging-port=${CONFIG.debugPort}`);
+    chromeOptions.debuggerAddress(`127.0.0.1:${CONFIG.debugPort}`);
 
     try {
-        // Check if Chrome is running
-        const isRunning = await isChromeRunning();
-        if (isRunning) {
-            console.log('⚠️  Chrome is currently running');
-            console.log('📌 For best results, please close Chrome manually');
-            await closeChrome();
-        }
-
-        // Wait a bit after Chrome closes
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Set up Chrome options
-        const chromeOptions = new chrome.Options();
-
-        if (CONFIG.useRealProfile) {
-            // Use actual Chrome profile
-            const userDataDir = getRealChromeProfilePath();
-            console.log(`📁 Using Chrome profile from: ${userDataDir}`);
-
-            chromeOptions.addArguments(`--user-data-dir=${userDataDir}`);
-            chromeOptions.addArguments(`--profile-directory=${CONFIG.profileName}`);
-        }
-
-        // Minimal flags - just essentials for a natural experience
-        chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
-        chromeOptions.excludeSwitches(['enable-automation']);
-        chromeOptions.addArguments('--disable-infobars');
-
-        // Start maximized like a normal user
-        chromeOptions.addArguments('--start-maximized');
-
-        // Set realistic user agent
-        chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-
-        console.log('🚀 Starting Chrome with natural settings...');
-
         const driver = await new Builder()
             .forBrowser('chrome')
             .setChromeOptions(chromeOptions)
             .build();
 
-        // Remove webdriver property
-        await driver.executeScript(`
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-        `);
-
-        console.log('✅ Natural Chrome driver created successfully!\n');
-
+        console.log('✅ Successfully connected to Chrome!\n');
         return driver;
 
     } catch (error) {
-        console.error('❌ Driver creation failed:', error.message);
+        console.error('❌ Failed to connect:', error.message);
+        console.log('\n💡 Try these steps:');
+        console.log('1. Close all Chrome windows');
+        console.log('2. Run the script again');
+        console.log('3. Let the script start Chrome for you\n');
+        throw error;
+    }
+}
+
+// === CREATE PROFILE COPY METHOD ===
+async function createProfileCopyDriver() {
+    console.log('📁 Creating Chrome with profile copy...\n');
+
+    const { userDataDir } = getChromePaths();
+    const tempDir = path.join(os.tmpdir(), `chrome-automation-${Date.now()}`);
+
+    // Create temp directory
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    // Copy only essential files
+    const filesToCopy = ['Cookies', 'Preferences', 'Local State'];
+    const sourceDir = path.join(userDataDir, 'Default');
+    const destDir = path.join(tempDir, 'Default');
+
+    fs.mkdirSync(destDir, { recursive: true });
+
+    for (const file of filesToCopy) {
+        const src = path.join(sourceDir, file);
+        const dest = path.join(destDir, file);
+
+        if (fs.existsSync(src)) {
+            try {
+                fs.copyFileSync(src, dest);
+                console.log(`   ✅ Copied ${file}`);
+            } catch (e) {
+                console.log(`   ⚠️  Skipped ${file}`);
+            }
+        }
+    }
+
+    const chromeOptions = new chrome.Options();
+    chromeOptions.addArguments(`--user-data-dir=${tempDir}`);
+    chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+    chromeOptions.excludeSwitches(['enable-automation']);
+    chromeOptions.addArguments('--start-maximized');
+
+    const driver = await new Builder()
+        .forBrowser('chrome')
+        .setChromeOptions(chromeOptions)
+        .build();
+
+    console.log('✅ Chrome started with profile copy\n');
+    return { driver, tempDir };
+}
+
+// === CREATE NATURAL CHROME DRIVER ===
+async function createNaturalChromeDriver() {
+    console.log('🌟 Setting up natural Chrome automation...\n');
+
+    try {
+        if (CONFIG.profileMethod === 'remote-debugging') {
+            // Check if Chrome is already running with debugging
+            try {
+                return await connectToExistingChrome();
+            } catch (e) {
+                // Chrome not running with debugging, start it
+                console.log('📌 Chrome not running with remote debugging');
+                console.log('🔄 Starting Chrome for you...\n');
+
+                await startChromeWithRemoteDebugging();
+
+                // Wait and then connect
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return await connectToExistingChrome();
+            }
+        } else {
+            // Use profile copy method
+            const result = await createProfileCopyDriver();
+            return result.driver;
+        }
+
+    } catch (error) {
+        console.error('❌ Setup failed:', error.message);
         throw error;
     }
 }
@@ -501,10 +591,11 @@ function loadContractorsFromExcel(mode = 'single') {
 // === MAIN NATURAL AUTOMATION ===
 async function runNaturalAutomation(mode = 'single') {
     let driver;
+    let tempDir;
 
     try {
         console.log('🌟 NATURAL USER AUTOMATION\n');
-        console.log('This automation mimics natural user behavior\n');
+        console.log(`📋 Using method: ${CONFIG.profileMethod}\n`);
 
         // Load contractor data
         const contractors = mode === 'single' ?
@@ -512,7 +603,14 @@ async function runNaturalAutomation(mode = 'single') {
             loadContractorsFromExcel('all');
 
         // Create natural driver
-        driver = await createNaturalChromeDriver();
+        if (CONFIG.profileMethod === 'remote-debugging') {
+            driver = await createNaturalChromeDriver();
+        } else {
+            const result = await createProfileCopyDriver();
+            driver = result.driver;
+            tempDir = result.tempDir;
+        }
+
         const automator = new NaturalHumanAutomator(driver);
 
         // Initial navigation
@@ -572,12 +670,24 @@ async function runNaturalAutomation(mode = 'single') {
         console.error('\n❌ Automation error:', error.message);
         console.error(error.stack);
     } finally {
-        if (driver) {
+        if (driver && CONFIG.profileMethod !== 'remote-debugging') {
             console.log('\n⏰ Browser will remain open for review...');
             console.log('📌 Close the browser manually when done\n');
 
-            // Keep browser open indefinitely
+            // Keep browser open for profile copy method
             await new Promise(() => { });
+        } else if (CONFIG.profileMethod === 'remote-debugging') {
+            console.log('\n📌 Browser remains under your control');
+            console.log('✅ You can continue using Chrome normally\n');
+        }
+
+        // Cleanup temp directory if used
+        if (tempDir && fs.existsSync(tempDir)) {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch (e) {
+                // Ignore cleanup errors
+            }
         }
     }
 }
@@ -595,10 +705,15 @@ if (require.main === module) {
         console.log('  node natural-automation.js --help  Show this help\n');
 
         console.log('📋 Features:');
-        console.log('  • Uses your real Chrome profile');
+        console.log('  • Two methods: remote-debugging or profile-copy');
         console.log('  • Natural typing and clicking patterns');
         console.log('  • Interactive navigation prompts');
         console.log('  • Human-like delays and behavior\n');
+
+        console.log('🔧 Configuration:');
+        console.log('  Edit CONFIG.profileMethod to switch between:');
+        console.log('  - "remote-debugging": Connect to existing Chrome');
+        console.log('  - "profile-copy": Create a copy of your profile\n');
 
     } else if (args.includes('--all')) {
         console.log('👥 Processing ALL Security contractors\n');
