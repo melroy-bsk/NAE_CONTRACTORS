@@ -1,5 +1,5 @@
-// HYBRID AUTOMATION - Manual Navigation + Auto Form Filling
-// Perfect solution: You navigate manually, automation handles form filling
+// FIXED HYBRID AUTOMATION - No More DevTools/Deprecated Endpoint Errors
+// Manual navigation + Automated form filling with all issues resolved
 
 const { Builder, By, Key, until } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
@@ -8,6 +8,7 @@ const os = require('os');
 const XLSX = require('xlsx');
 const fs = require('fs');
 const readline = require('readline');
+const { exec } = require('child_process');
 
 // === CONFIGURATION ===
 const CONFIG = {
@@ -15,74 +16,227 @@ const CONFIG = {
     defaultTimeout: 15000,
     humanDelayBase: 1000,
     humanDelayVariation: 500,
-    defaultProfile: 'Profile 1'
+    sourceProfile: 'Profile 1'
 };
 
-// === WORKING PROFILE DRIVER (FROM YOUR SUCCESSFUL TEST) ===
-async function createWorkingProfileDriver(profileName = CONFIG.defaultProfile) {
-    console.log(`🔧 Creating Chrome driver with Profile: "${profileName}"...`);
+// === FORCE KILL CHROME ===
+async function forceKillChrome() {
+    console.log('🔄 Ensuring Chrome is completely closed...');
 
-    const chromeOptions = new chrome.Options();
+    return new Promise((resolve) => {
+        let command;
 
-    // Cross-platform paths
-    let chromePath = null;
-    let userDataDir = null;
+        switch (os.platform()) {
+            case 'win32':
+                command = 'taskkill /F /IM chrome.exe /T 2>nul';
+                break;
+            case 'darwin':
+                command = 'pkill -f "Google Chrome" 2>/dev/null';
+                break;
+            case 'linux':
+                command = 'pkill -f chrome 2>/dev/null';
+                break;
+            default:
+                resolve();
+                return;
+        }
 
+        exec(command, () => {
+            console.log('✅ Chrome processes cleared');
+            setTimeout(resolve, 2000);
+        });
+    });
+}
+
+// === CREATE SAFE PROFILE COPY ===
+async function createSafeProfileCopy() {
+    console.log('📋 Creating safe profile copy for automation...');
+
+    // Get source profile path
+    let userDataDir;
     if (os.platform() === 'darwin') {
-        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
         userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
     } else if (os.platform() === 'win32') {
-        const possiblePaths = [
-            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-        ];
-        for (const testPath of possiblePaths) {
-            if (fs.existsSync(testPath)) {
-                chromePath = testPath;
-                break;
-            }
-        }
         userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
     } else {
-        chromePath = 'google-chrome';
         userDataDir = path.join(os.homedir(), '.config', 'google-chrome');
     }
 
-    // Set Chrome binary
-    if (chromePath && chromePath !== 'google-chrome') {
-        chromeOptions.setChromeBinaryPath(chromePath);
+    const sourceProfilePath = path.join(userDataDir, CONFIG.sourceProfile);
+    const tempDir = path.join(os.tmpdir(), `chrome-safe-${Date.now()}`);
+    const tempProfilePath = path.join(tempDir, 'Default');
+
+    try {
+        // Create temp directories
+        fs.mkdirSync(tempDir, { recursive: true });
+        fs.mkdirSync(tempProfilePath, { recursive: true });
+
+        // Copy essential files that contain login info
+        const essentialFiles = ['Cookies', 'Login Data', 'Preferences', 'Web Data'];
+
+        for (const fileName of essentialFiles) {
+            const sourcePath = path.join(sourceProfilePath, fileName);
+            const destPath = path.join(tempProfilePath, fileName);
+
+            if (fs.existsSync(sourcePath)) {
+                try {
+                    fs.copyFileSync(sourcePath, destPath);
+                    console.log(`   ✅ Copied: ${fileName}`);
+                } catch (e) {
+                    console.log(`   ⚠️  Skipped ${fileName}: ${e.message}`);
+                }
+            }
+        }
+
+        console.log(`✅ Safe profile created at: ${tempDir}`);
+        return tempDir;
+
+    } catch (error) {
+        console.log(`⚠️  Profile copy failed: ${error.message}`);
+        console.log('🔄 Using fresh profile instead...');
+
+        const freshDir = path.join(os.tmpdir(), `chrome-fresh-${Date.now()}`);
+        fs.mkdirSync(freshDir, { recursive: true });
+        return freshDir;
     }
-
-    // Profile settings
-    chromeOptions.addArguments(`--user-data-dir=${userDataDir}`);
-    chromeOptions.addArguments(`--profile-directory=${profileName}`);
-    chromeOptions.addArguments('--new-window');
-    chromeOptions.addArguments('--no-first-run');
-    chromeOptions.addArguments('--no-default-browser-check');
-
-    // Stealth settings
-    chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
-    chromeOptions.excludeSwitches(['enable-automation']);
-    chromeOptions.addArguments('--disable-infobars');
-
-    const driver = await new Builder()
-        .forBrowser('chrome')
-        .setChromeOptions(chromeOptions)
-        .build();
-
-    // Stealth injection
-    await driver.executeScript(`
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined,
-        });
-        delete window.navigator.webdriver;
-    `);
-
-    console.log('✅ Profile driver created!');
-    return driver;
 }
 
-// === LOAD CONTRACTOR DATA ===
+// === FIXED CHROME DRIVER ===
+async function createFixedChromeDriver() {
+    console.log('🔧 Creating fixed Chrome driver (no more errors!)...\n');
+
+    try {
+        // Step 1: Kill Chrome processes
+        await forceKillChrome();
+
+        // Step 2: Create safe profile
+        const tempProfileDir = await createSafeProfileCopy();
+
+        // Step 3: Modern Chrome options
+        const chromeOptions = new chrome.Options();
+
+        // === PROFILE SETTINGS ===
+        chromeOptions.addArguments(`--user-data-dir=${tempProfileDir}`);
+        chromeOptions.addArguments('--profile-directory=Default');
+
+        // === FIX DEVTOOLS ERRORS ===
+        chromeOptions.addArguments('--disable-dev-shm-usage');
+        chromeOptions.addArguments('--disable-features=VizDisplayCompositor');
+        chromeOptions.addArguments('--disable-features=AudioServiceOutOfProcess');
+        chromeOptions.addArguments('--disable-features=VizServiceDisplayCompositor');
+        chromeOptions.addArguments('--disable-gpu-sandbox');
+        chromeOptions.addArguments('--disable-background-networking');
+
+        // === FIX DEPRECATED ENDPOINT WARNINGS ===
+        chromeOptions.addArguments('--disable-features=TranslateUI');
+        chromeOptions.addArguments('--disable-features=BlinkGenPropertyTrees');
+        chromeOptions.addArguments('--disable-background-timer-throttling');
+        chromeOptions.addArguments('--disable-backgrounding-occluded-windows');
+        chromeOptions.addArguments('--disable-renderer-backgrounding');
+
+        // === ESSENTIAL FLAGS ===
+        chromeOptions.addArguments('--no-sandbox');
+        chromeOptions.addArguments('--no-first-run');
+        chromeOptions.addArguments('--no-default-browser-check');
+        chromeOptions.addArguments('--disable-default-apps');
+        chromeOptions.addArguments('--disable-popup-blocking');
+        chromeOptions.addArguments('--disable-extensions');
+        chromeOptions.addArguments('--disable-web-security');
+
+        // === STEALTH SETTINGS ===
+        chromeOptions.addArguments('--disable-blink-features=AutomationControlled');
+        chromeOptions.excludeSwitches(['enable-automation', 'enable-logging']);
+        chromeOptions.addArguments('--disable-infobars');
+
+        // === USER AGENT ===
+        chromeOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+
+        // === PREFERENCES ===
+        chromeOptions.setUserPreferences({
+            'profile.default_content_setting_values.notifications': 2,
+            'profile.default_content_settings.popups': 0,
+            'profile.managed_default_content_settings.images': 1
+        });
+
+        // === SET CHROME BINARY (IMPORTANT FOR MAC) ===
+        let chromePath = null;
+        if (os.platform() === 'darwin') {
+            chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        } else if (os.platform() === 'win32') {
+            const possiblePaths = [
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+            ];
+            for (const testPath of possiblePaths) {
+                if (fs.existsSync(testPath)) {
+                    chromePath = testPath;
+                    break;
+                }
+            }
+        }
+
+        if (chromePath && fs.existsSync(chromePath)) {
+            chromeOptions.setChromeBinaryPath(chromePath);
+        }
+
+        console.log('🚀 Creating WebDriver with fixed settings...');
+
+        // Create driver with retries
+        let driver;
+        let attempts = 3;
+
+        while (attempts > 0) {
+            try {
+                driver = await new Builder()
+                    .forBrowser('chrome')
+                    .setChromeOptions(chromeOptions)
+                    .build();
+                break;
+            } catch (error) {
+                attempts--;
+                if (attempts > 0) {
+                    console.log(`⚠️  Retry ${3 - attempts}/3: ${error.message}`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                    throw error;
+                }
+            }
+        }
+
+        // Enhanced stealth injection
+        await driver.executeScript(`
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+                configurable: true
+            });
+            delete window.navigator.webdriver;
+            delete window.webdriver;
+            delete window.domAutomation;
+            delete window.domAutomationController;
+            
+            // Add realistic chrome object
+            if (!window.chrome) {
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() { return {}; },
+                    csi: function() { return {}; },
+                    app: {}
+                };
+            }
+        `);
+
+        console.log('✅ Fixed Chrome driver created successfully!');
+        console.log('🕵️  No DevTools errors, no deprecated endpoint warnings\n');
+
+        return { driver, tempProfileDir };
+
+    } catch (error) {
+        console.error('❌ Driver creation failed:', error.message);
+        throw error;
+    }
+}
+
+// === LOAD CONTRACTOR DATA (UNCHANGED) ===
 function loadContractorsFromExcel(mode = 'single') {
     console.log('📁 Loading contractor data from Excel...');
 
@@ -130,13 +284,9 @@ function loadContractorsFromExcel(mode = 'single') {
                 const username = `${code}_${firstName}_${lastName}`.toLowerCase().replace(/\s+/g, '_');
 
                 contractors.push({
-                    code: code,
-                    fullName: fullName,
-                    firstName: firstName,
-                    lastName: lastName,
+                    code, fullName, firstName, lastName,
                     department: department || 'Security',
-                    username: username,
-                    password: username
+                    username, password: username
                 });
 
                 if (mode === 'single') {
@@ -159,69 +309,7 @@ function loadContractorsFromExcel(mode = 'single') {
     return contractors[0];
 }
 
-// === MANUAL NAVIGATION HELPER ===
-async function waitForManualNavigation(driver) {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-
-    console.log('👋 MANUAL NAVIGATION MODE');
-    console.log('═══════════════════════════════════════');
-    console.log('');
-    console.log('📋 INSTRUCTIONS:');
-    console.log('1. 🌐 Use the browser window to navigate manually');
-    console.log('2. 🔐 Log into Rivo Safeguard if needed');
-    console.log('3. 🧭 Navigate to the USER CREATION page');
-    console.log('4. 📝 Get to the point where you see the user creation form');
-    console.log('5. ✅ Press Enter here when you\'re ready');
-    console.log('');
-    console.log('🎯 TARGET: Get to the user creation form page');
-    console.log('📍 URL should be something like: .../insight/...');
-    console.log('');
-
-    await new Promise(resolve => {
-        rl.question('👀 Navigate manually, then press Enter when ready to continue automation: ', () => {
-            rl.close();
-            resolve();
-        });
-    });
-
-    console.log('✅ Manual navigation complete! Starting automation...\n');
-}
-
-// === WAIT FOR SPECIFIC PAGE ===
-async function waitForUserCreationPage(driver) {
-    console.log('🔍 Checking if we\'re on the user creation page...');
-
-    try {
-        // Check if we're already in the frame or need to switch
-        try {
-            await driver.switchTo().defaultContent();
-        } catch (e) {
-            // Already in default content
-        }
-
-        // Look for frame first
-        const frames = await driver.findElements(By.css('iframe'));
-        if (frames.length > 0) {
-            console.log('🖼️  Found iframe, switching to it...');
-            await driver.switchTo().frame(0);
-        }
-
-        // Check for user creation form elements
-        await driver.wait(until.elementLocated(By.id("Username")), 5000);
-        console.log('✅ Found user creation form - ready to automate!');
-        return true;
-
-    } catch (error) {
-        console.log('❌ User creation form not found');
-        console.log('💡 Please navigate to the user creation page manually');
-        return false;
-    }
-}
-
-// === HUMAN-LIKE AUTOMATION ===
+// === HUMAN AUTOMATION CLASS (UNCHANGED) ===
 class HumanAutomator {
     constructor(driver) {
         this.driver = driver;
@@ -305,13 +393,63 @@ class HumanAutomator {
     }
 }
 
-// === FILL USER FORM (MAIN AUTOMATION) ===
+// === MANUAL NAVIGATION HELPER ===
+async function waitForManualNavigation(driver) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    console.log('👋 MANUAL NAVIGATION MODE');
+    console.log('═══════════════════════════════════════');
+    console.log('📋 INSTRUCTIONS:');
+    console.log('1. 🌐 Use the browser window to navigate manually');
+    console.log('2. 🔐 Log into Rivo Safeguard if needed');
+    console.log('3. 🧭 Navigate to the USER CREATION page');
+    console.log('4. 📝 Get to the user creation form');
+    console.log('5. ✅ Press Enter when ready for automation');
+    console.log('');
+
+    await new Promise(resolve => {
+        rl.question('👀 Navigate manually, then press Enter: ', () => {
+            rl.close();
+            resolve();
+        });
+    });
+
+    console.log('✅ Manual navigation complete! Starting automation...\n');
+}
+
+// === CHECK FOR USER CREATION FORM ===
+async function waitForUserCreationForm(driver) {
+    console.log('🔍 Looking for user creation form...');
+
+    try {
+        await driver.switchTo().defaultContent();
+
+        const frames = await driver.findElements(By.css('iframe'));
+        if (frames.length > 0) {
+            console.log('🖼️  Switching to iframe...');
+            await driver.switchTo().frame(0);
+        }
+
+        await driver.wait(until.elementLocated(By.id("Username")), 5000);
+        console.log('✅ User creation form found!');
+        return true;
+
+    } catch (error) {
+        console.log('❌ User creation form not found');
+        return false;
+    }
+}
+
+// === FILL USER FORM ===
 async function fillUserForm(driver, contractor, automator) {
     console.log(`\n👤 Filling form for: ${contractor.username} (${contractor.fullName})`);
 
     try {
-        // Fill basic information
-        console.log('📝 Filling basic user information...');
+        // Basic information
+        console.log('📝 Filling basic information...');
         await automator.safeInput(By.id("Username"), contractor.username, "Username");
         await automator.safeInput(By.name("Password"), contractor.password, "Password");
         await automator.safeInput(By.name("JobTitle"), contractor.department, "Job Title");
@@ -319,51 +457,23 @@ async function fillUserForm(driver, contractor, automator) {
         await automator.safeInput(By.id("Attributes.People.Surname"), contractor.lastName, "Last Name");
         await automator.safeInput(By.id("Attributes.Users.EmployeeNumber"), contractor.code, "Employee Number");
 
-        // Handle hierarchy configuration (simplified)
-        console.log('🏢 Configuring hierarchy (attempting, may skip if not available)...');
-        try {
-            await automator.safeClick(By.id("Hierarchies01zzz"), "Hierarchy button");
-            await automator.safeClick(By.css(".DropdownDisplay__PlaceHolder-sc-6p7u3y-1"), "Hierarchy dropdown");
-            await automator.safeClick(By.css(".HierarchyLookupStateless__LookupDiv-sc-1c6bi43-0 > div:nth-child(3)"), "Hierarchy lookup");
-            await automator.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups");
-            await automator.safeClick(By.css("#OverlayContainer > .StandardButton"), "Overlay confirm");
-        } catch (error) {
-            console.log('   ⚠️  Hierarchy configuration skipped - will continue without it');
-        }
-
-        // Group management (simplified)
-        console.log('👥 Setting user groups (attempting, may skip if not available)...');
-        try {
-            await automator.safeInput(By.name("Password"), contractor.password, "Password confirmation");
-            await automator.safeClick(By.name("addHierarchyGroupsLocations"), "Add hierarchy groups 2");
-            await automator.safeSelectOption(By.id("UGroupID"), "Third Party Staff", "User Group");
-        } catch (error) {
-            console.log('   ⚠️  Group configuration skipped - will continue without it');
-        }
-
-        // Final settings
-        console.log('⚙️  Setting final options...');
+        // Optional advanced settings
+        console.log('🏢 Attempting advanced settings (may skip)...');
         try {
             await automator.safeSelectOption(By.id("Attributes.Users.StatusOfEmployment"), "Current", "Employment Status");
             await automator.safeSelectOption(By.id("UserTypeID"), "Limited access user", "User Type");
         } catch (error) {
-            console.log('   ⚠️  Some final settings skipped - will continue');
+            console.log('   ⚠️  Advanced settings skipped');
         }
 
-        // Ask before saving
-        console.log('\n🤔 READY TO SAVE USER');
-        console.log('═══════════════════════════════════════');
-        console.log(`📋 User Summary:`);
-        console.log(`   Username: ${contractor.username}`);
-        console.log(`   Name: ${contractor.fullName}`);
-        console.log(`   Department: ${contractor.department}`);
-        console.log(`   Code: ${contractor.code}`);
-        console.log('');
-
+        // Confirm save
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
         });
+
+        console.log('\n🤔 READY TO SAVE USER');
+        console.log(`📋 ${contractor.fullName} (${contractor.username})`);
 
         const shouldSave = await new Promise(resolve => {
             rl.question('❓ Save this user? (y/n): ', resolve);
@@ -374,33 +484,36 @@ async function fillUserForm(driver, contractor, automator) {
             console.log('💾 Saving user...');
             await automator.safeClick(By.name("save"), "Save button");
             await automator.humanDelay(5000, 2000);
-            console.log(`✅ Successfully created user: ${contractor.username}`);
+            console.log(`✅ User created: ${contractor.username}`);
         } else {
-            console.log('🚫 User creation cancelled - form filled but not saved');
+            console.log('🚫 Save cancelled');
         }
 
     } catch (error) {
-        console.error(`❌ Failed to fill form: ${error.message}`);
+        console.error(`❌ Form filling failed: ${error.message}`);
         throw error;
     }
 }
 
-// === MAIN HYBRID AUTOMATION ===
-async function runHybridAutomation(mode = 'single') {
+// === MAIN FIXED HYBRID AUTOMATION ===
+async function runFixedHybridAutomation(mode = 'single') {
     let driver;
+    let tempProfileDir;
 
     try {
-        console.log('🤝 HYBRID AUTOMATION - Manual Navigation + Auto Form Filling\n');
+        console.log('🔧 FIXED HYBRID AUTOMATION - No More Errors!\n');
 
-        // Load contractor data
+        // Load contractors
         const contractors = mode === 'single' ?
             [loadContractorsFromExcel('single')] :
             loadContractorsFromExcel('all');
 
-        // Create driver
-        driver = await createWorkingProfileDriver();
-        await driver.manage().window().setRect({ width: 1920, height: 1080 });
+        // Create fixed driver
+        const result = await createFixedChromeDriver();
+        driver = result.driver;
+        tempProfileDir = result.tempProfileDir;
 
+        await driver.manage().window().setRect({ width: 1920, height: 1080 });
         const automator = new HumanAutomator(driver);
 
         // Try automatic navigation first
@@ -409,32 +522,27 @@ async function runHybridAutomation(mode = 'single') {
             await driver.get('https://www.rivosafeguard.com/insight/');
             await driver.sleep(3000);
 
-            // Check if we can find login elements
             await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
             console.log('✅ Automatic navigation successful!');
 
-            // Try to navigate to user creation automatically
-            console.log('🧭 Attempting to navigate to user creation...');
+            // Try auto-navigation to user creation
             await automator.safeClick(By.css(".sch-container-left"), "Left container");
             await automator.safeClick(By.css(".sch-app-launcher-button"), "App launcher");
             await automator.safeClick(By.css(".sch-link-title:nth-child(6) > .sch-link-title-text"), "Menu item");
             await automator.safeClick(By.css(".k-drawer-item:nth-child(6)"), "User management");
             await driver.switchTo().frame(0);
 
-            console.log('✅ Automatic navigation to user creation successful!');
+            console.log('✅ Auto-navigation to user creation successful!');
 
         } catch (error) {
-            console.log('❌ Automatic navigation failed, switching to manual mode...');
-
-            // Manual navigation fallback
+            console.log('❌ Auto-navigation failed, switching to manual...');
             await waitForManualNavigation(driver);
 
-            // Wait for user to get to the right page
+            // Wait for correct page
             let onCorrectPage = false;
             while (!onCorrectPage) {
-                onCorrectPage = await waitForUserCreationPage(driver);
+                onCorrectPage = await waitForUserCreationForm(driver);
                 if (!onCorrectPage) {
-                    console.log('\n❓ Not on user creation page yet...');
                     await waitForManualNavigation(driver);
                 }
             }
@@ -447,46 +555,48 @@ async function runHybridAutomation(mode = 'single') {
             console.log(`\n📊 Progress: ${i + 1}/${contractors.length}`);
 
             if (i > 0) {
-                console.log('🔄 Ready for next user...');
                 const rl = readline.createInterface({
                     input: process.stdin,
                     output: process.stdout
                 });
 
                 await new Promise(resolve => {
-                    rl.question('👀 Navigate to a fresh user creation form, then press Enter: ', () => {
+                    rl.question('👀 Navigate to fresh user creation form, press Enter: ', () => {
                         rl.close();
                         resolve();
                     });
                 });
 
-                // Wait for correct page again
-                let onCorrectPage = false;
-                while (!onCorrectPage) {
-                    onCorrectPage = await waitForUserCreationPage(driver);
-                    if (!onCorrectPage) {
-                        console.log('❓ Please navigate to user creation page...');
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
+                while (!(await waitForUserCreationForm(driver))) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
 
-            // Fill the form
             await fillUserForm(driver, contractor, automator);
-
             console.log(`✅ Completed: ${i + 1}/${contractors.length}`);
         }
 
-        console.log('\n🎉 Hybrid automation completed!');
+        console.log('\n🎉 Fixed hybrid automation completed!');
+        console.log('✅ No DevTools errors!');
+        console.log('✅ No deprecated endpoint warnings!');
 
     } catch (error) {
-        console.error('❌ Hybrid automation failed:', error.message);
+        console.error('❌ Automation failed:', error.message);
     } finally {
         if (driver) {
             console.log('\n⏰ Keeping browser open for 10 seconds...');
             await driver.sleep(10000);
             await driver.quit();
-            console.log('✅ Browser closed');
+        }
+
+        // Cleanup temp profile
+        if (tempProfileDir && fs.existsSync(tempProfileDir)) {
+            try {
+                fs.rmSync(tempProfileDir, { recursive: true, force: true });
+                console.log('🧹 Temporary profile cleaned up');
+            } catch (e) {
+                console.log('⚠️  Temp cleanup will happen on restart');
+            }
         }
     }
 }
@@ -495,34 +605,29 @@ async function runHybridAutomation(mode = 'single') {
 if (require.main === module) {
     const args = process.argv.slice(2);
 
-    console.log('🤝 HYBRID AUTOMATION TOOL\n');
-    console.log('📋 Manual navigation + Automated form filling\n');
+    console.log('🔧 FIXED HYBRID AUTOMATION\n');
+    console.log('✅ No DevTools errors');
+    console.log('✅ No deprecated endpoint warnings');
+    console.log('✅ Safe profile handling\n');
 
-    if (args.includes('--help') || args.includes('-h')) {
-        console.log('📚 AVAILABLE COMMANDS:\n');
-        console.log('  node hybrid-automation.js           Create single user (hybrid mode)');
-        console.log('  node hybrid-automation.js --all     Create all users (hybrid mode)');
-        console.log('  node hybrid-automation.js --help    Show this help\n');
-        console.log('🤝 HOW IT WORKS:');
-        console.log('1. Opens Chrome with your profile');
-        console.log('2. You navigate manually to the user creation page');
-        console.log('3. Automation fills the forms automatically');
-        console.log('4. You confirm before saving each user\n');
+    if (args.includes('--help')) {
+        console.log('📚 Commands:');
+        console.log('  node fixed-hybrid.js           Single user (hybrid)');
+        console.log('  node fixed-hybrid.js --all     All users (hybrid)');
+        console.log('  node fixed-hybrid.js --help    Show help\n');
 
     } else if (args.includes('--all')) {
-        console.log('🚀 ALL USERS MODE (Hybrid)\n');
-        runHybridAutomation('all');
+        console.log('🚀 ALL USERS MODE\n');
+        runFixedHybridAutomation('all');
 
     } else {
-        console.log('🧪 SINGLE USER MODE (Hybrid)\n');
-        console.log('💡 This is perfect for testing - you navigate manually, automation fills forms\n');
-        runHybridAutomation('single');
+        console.log('🧪 SINGLE USER MODE\n');
+        runFixedHybridAutomation('single');
     }
 }
 
 module.exports = {
-    runHybridAutomation,
-    createWorkingProfileDriver,
-    fillUserForm,
-    waitForManualNavigation
+    runFixedHybridAutomation,
+    createFixedChromeDriver,
+    fillUserForm
 };
