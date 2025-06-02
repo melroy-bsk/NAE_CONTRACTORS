@@ -432,6 +432,7 @@ async function createWorkingProfileDriver(profileName = 'Profile 1') {
     }
 }
 
+
 // === STEP 6: GENERATE WORKING AUTOMATION CODE ===
 function generateWorkingCode(userDataDir, profileName) {
     console.log('🔍 STEP 6: Generating working automation code...\n');
@@ -671,6 +672,67 @@ async function testWorkingProfile() {
     }
 }
 
+async function runCompleteAutomation() {
+    let driver;
+
+    try {
+        console.log('🚀 Running complete automation with working profile...\n');
+
+        // Create working driver
+        driver = await createWorkingProfileDriver('Profile 1');
+        await driver.manage().window().setRect({ width: 1920, height: 1080 });
+
+        // Navigate to Rivo Safeguard
+        console.log('🌐 Navigating to Rivo Safeguard...');
+        await driver.get('https://www.rivosafeguard.com/insight/');
+        await driver.sleep(3000);
+
+        // Check login status
+        try {
+            await driver.wait(until.elementLocated(By.css('.sch-container-left')), 10000);
+            console.log('✅ Successfully logged in with Profile 1!');
+
+            // Start your automation here
+            console.log('🤖 Starting user creation automation...');
+
+            // Navigate to user creation (your existing code)
+            await driver.findElement(By.css(".sch-container-left")).click();
+            await driver.sleep(1500);
+
+            await driver.findElement(By.css(".sch-app-launcher-button")).click();
+            await driver.sleep(2000);
+
+            await driver.findElement(By.css(".sch-link-title:nth-child(6) > .sch-link-title-text")).click();
+            await driver.sleep(2500);
+
+            await driver.findElement(By.css(".k-drawer-item:nth-child(6)")).click();
+            await driver.sleep(3000);
+
+            // Switch to frame
+            await driver.switchTo().frame(0);
+            await driver.sleep(2000);
+
+            console.log('✅ Successfully navigated to user creation page!');
+            console.log('🎉 Profile automation is working - you can now add your user creation logic!');
+
+            // Keep browser open for manual verification
+            console.log('\n👀 Keeping browser open for 15 seconds to verify navigation...');
+            await driver.sleep(15000);
+
+        } catch (error) {
+            console.log('❌ Not logged in to Rivo Safeguard');
+            console.log('💡 Please log into Rivo Safeguard with Profile 1 first');
+        }
+
+    } catch (error) {
+        console.error('❌ Automation failed:', error.message);
+    } finally {
+        if (driver) {
+            await driver.quit();
+            console.log('✅ Automation browser closed');
+        }
+    }
+}
 
 // === RUN DIAGNOSTIC ===
 if (require.main === module) {
