@@ -1,5 +1,5 @@
-// CHROME PROFILE AUTOMATION WITH GOOGLE SSO
-// Uses existing Chrome profile to maintain Google login sessions
+// USE EXISTING CHROME PROFILE WITH GOOGLE SSO
+// Connects to your already-running Chrome or starts it with your profile
 
 const { Builder, By, Key, until } = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
@@ -16,18 +16,18 @@ const CONFIG = {
     defaultTimeout: 30000,
     humanDelayBase: 1500,
     humanDelayVariation: 1000,
-    chromeProfile: 'Default', // Change to your profile name if different
-    debugPort: 9222,
-    useExistingChrome: true // Always use existing Chrome to maintain sessions
+    debugPort: 9222
 };
 
-// === CHECK IF CHROME IS RUNNING ===
-async function isChromeRunning() {
+// === CHECK IF CHROME IS RUNNING WITH DEBUGGING ===
+async function isChromeDebuggingEnabled() {
     return new Promise((resolve) => {
-        exec('curl -s http://localhost:9222/json/version', (error, stdout) => {
+        exec(`curl -s http://localhost:${CONFIG.debugPort}/json/version`, (error, stdout) => {
             if (!error && stdout) {
                 try {
-                    JSON.parse(stdout);
+                    const info = JSON.parse(stdout);
+                    console.log('✅ Found Chrome with debugging enabled');
+                    console.log(`   Browser: ${info.Browser}`);
                     resolve(true);
                 } catch (e) {
                     resolve(false);
@@ -39,128 +39,86 @@ async function isChromeRunning() {
     });
 }
 
-// === GET CHROME EXECUTABLE PATH ===
-function getChromePath() {
+// === INSTRUCTIONS FOR MANUAL CHROME START ===
+async function showChromeStartInstructions() {
+    console.log('\n' + '═'.repeat(70));
+    console.log('⚠️  CHROME SETUP REQUIRED');
+    console.log('═'.repeat(70));
+    console.log('\n📋 Please start Chrome with remote debugging:\n');
+
     const platform = os.platform();
 
-    if (platform === 'darwin') {
-        return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-    } else if (platform === 'win32') {
-        const paths = [
-            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-            path.join(os.homedir(), 'AppData\\Local\\Google\\Chrome\\Application\\chrome.exe')
-        ];
-
-        for (const chromePath of paths) {
-            if (fs.existsSync(chromePath)) {
-                return chromePath;
-            }
-        }
-        return 'chrome.exe'; // Fallback to PATH
+    if (platform === 'win32') {
+        console.log('🖥️  WINDOWS Instructions:');
+        console.log('1. Close all Chrome windows');
+        console.log('2. Press Win+R, then paste this command:\n');
+        console.log('   chrome.exe --remote-debugging-port=9222');
+        console.log('\n   Or use full path:');
+        console.log('   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222\n');
+    } else if (platform === 'darwin') {
+        console.log('🍎 MAC Instructions:');
+        console.log('1. Close all Chrome windows');
+        console.log('2. Open Terminal and paste:\n');
+        console.log('   /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222\n');
     } else {
-        // Linux
-        const paths = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium'];
-        for (const chromePath of paths) {
-            if (fs.existsSync(chromePath)) {
-                return chromePath;
-            }
-        }
-        return 'google-chrome'; // Fallback
-    }
-}
-
-// === START CHROME WITH YOUR PROFILE ===
-async function startChromeWithProfile() {
-    console.log('🚀 Starting Chrome with your existing profile...\n');
-
-    const chromePath = getChromePath();
-    console.log(`📍 Chrome path: ${chromePath}`);
-
-    // Get user data directory
-    let userDataDir;
-    if (os.platform() === 'darwin') {
-        userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
-    } else if (os.platform() === 'win32') {
-        userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
-    } else {
-        userDataDir = path.join(os.homedir(), '.config', 'google-chrome');
+        console.log('🐧 LINUX Instructions:');
+        console.log('1. Close all Chrome windows');
+        console.log('2. Open Terminal and paste:\n');
+        console.log('   google-chrome --remote-debugging-port=9222\n');
     }
 
-    console.log(`📁 Profile location: ${userDataDir}`);
-    console.log(`👤 Using profile: ${CONFIG.chromeProfile}`);
+    console.log('3. Chrome will open with YOUR profile and saved logins');
+    console.log('4. You can browse normally - your Google session will work\n');
+    console.log('═'.repeat(70));
 
-    // Build command based on platform
-    let command;
-    if (os.platform() === 'win32') {
-        command = `"${chromePath}" --remote-debugging-port=${CONFIG.debugPort} --user-data-dir="${userDataDir}" --profile-directory="${CONFIG.chromeProfile}"`;
-    } else {
-        command = `"${chromePath}" --remote-debugging-port=${CONFIG.debugPort} --user-data-dir="${userDataDir}" --profile-directory="${CONFIG.chromeProfile}"`;
-    }
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
 
-    return new Promise((resolve, reject) => {
-        console.log('📌 Starting Chrome...');
-
-        exec(command, (error) => {
-            // Chrome will continue running, so we don't wait for it to exit
-            if (error && error.code !== null && error.code !== 0) {
-                // Only reject on actual errors, not on Chrome staying open
-                console.error('Error starting Chrome:', error);
-            }
+    await new Promise(resolve => {
+        rl.question('\n✅ Press Enter after starting Chrome with the command above: ', () => {
+            rl.close();
+            resolve();
         });
-
-        // Give Chrome time to start
-        console.log('⏳ Waiting for Chrome to start...');
-        setTimeout(async () => {
-            const running = await isChromeRunning();
-            if (running) {
-                console.log('✅ Chrome started successfully!');
-                console.log('🔐 Your Google sessions are preserved\n');
-                resolve();
-            } else {
-                console.log('⚠️  Chrome may be starting slowly, waiting more...');
-                setTimeout(resolve, 3000);
-            }
-        }, 3000);
     });
 }
 
-// === CONNECT TO CHROME WITH PROFILE ===
-async function connectToChromeWithProfile() {
-    console.log('🔌 Connecting to Chrome with your profile...\n');
+// === CONNECT TO YOUR EXISTING CHROME ===
+async function connectToYourChrome() {
+    console.log('🔌 Connecting to your Chrome profile...\n');
 
-    // First check if Chrome is running with debugging
-    const isRunning = await isChromeRunning();
+    // Check if Chrome is running with debugging
+    let isDebuggingEnabled = await isChromeDebuggingEnabled();
 
-    if (!isRunning) {
-        console.log('📌 Chrome not running with debugging port');
-        console.log('🔄 Starting Chrome for you...\n');
+    if (!isDebuggingEnabled) {
+        await showChromeStartInstructions();
 
-        await startChromeWithProfile();
-
-        // Extra wait to ensure Chrome is ready
-        await new Promise(resolve => setTimeout(resolve, 2000));
-    } else {
-        console.log('✅ Found existing Chrome with debugging enabled\n');
+        // Check again
+        isDebuggingEnabled = await isChromeDebuggingEnabled();
+        if (!isDebuggingEnabled) {
+            throw new Error('Chrome debugging port not found. Please follow the instructions above.');
+        }
     }
 
-    // Now connect to Chrome
     try {
+        // Connect to existing Chrome
         const chromeOptions = new chrome.Options();
         chromeOptions.debuggerAddress(`localhost:${CONFIG.debugPort}`);
 
-        console.log('🔗 Attempting connection...');
+        console.log('🔗 Connecting to Chrome...');
 
         const driver = await new Builder()
             .forBrowser('chrome')
             .setChromeOptions(chromeOptions)
             .build();
 
-        // Verify connection by getting current URL
+        // Test connection
         try {
             const currentUrl = await driver.getCurrentUrl();
-            console.log('✅ Successfully connected to Chrome!');
-            console.log(`📍 Current page: ${currentUrl}\n`);
+            console.log('✅ Successfully connected to your Chrome!');
+            console.log(`📍 Current page: ${currentUrl}`);
+            console.log('🔐 Your Google sessions are active\n');
         } catch (e) {
             console.log('✅ Connected to Chrome!\n');
         }
@@ -170,21 +128,20 @@ async function connectToChromeWithProfile() {
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
-        `).catch(() => { }); // Ignore errors if script fails
+        `).catch(() => { });
 
         return driver;
 
     } catch (error) {
-        console.error('❌ Failed to connect to Chrome:', error.message);
-        console.log('\n💡 Troubleshooting tips:');
-        console.log('1. Close ALL Chrome windows');
-        console.log('2. Run the script again');
-        console.log('3. The script will start Chrome with the correct settings\n');
+        console.error('❌ Connection failed:', error.message);
+        console.log('\n💡 Make sure you:');
+        console.log('1. Started Chrome with --remote-debugging-port=9222');
+        console.log('2. Chrome is running and accessible');
         throw error;
     }
 }
 
-// === NATURAL HUMAN AUTOMATOR (Same as before) ===
+// === NATURAL HUMAN AUTOMATOR ===
 class NaturalHumanAutomator {
     constructor(driver) {
         this.driver = driver;
@@ -199,19 +156,21 @@ class NaturalHumanAutomator {
         await element.click();
         await this.randomDelay(200, 500);
 
-        // Clear field
+        // Clear field naturally
         await element.sendKeys(Key.chord(Key.CONTROL, "a"));
         await this.randomDelay(100, 300);
         await element.sendKeys(Key.DELETE);
         await this.randomDelay(200, 400);
 
-        // Type naturally
+        // Type with natural rhythm
         for (let i = 0; i < text.length; i++) {
             await element.sendKeys(text[i]);
 
             if (Math.random() < 0.1) {
+                // Occasional pause
                 await this.driver.sleep(300 + Math.random() * 200);
             } else {
+                // Normal speed
                 await this.driver.sleep(50 + Math.random() * 100);
             }
         }
@@ -306,47 +265,26 @@ class NaturalHumanAutomator {
     }
 }
 
-// === INTERACTIVE NAVIGATION ===
-async function interactiveNavigation(message = "Navigate to the desired page") {
+// === SIMPLE NAVIGATION PROMPT ===
+async function waitForUserNavigation(message = "Navigate to the desired page") {
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
     });
 
     console.log('\n' + '═'.repeat(60));
-    console.log('🧭 MANUAL NAVIGATION REQUIRED');
+    console.log('🧭 MANUAL NAVIGATION');
     console.log('═'.repeat(60));
-    console.log(`\n📋 ${message}`);
-    console.log('\n💡 Important:');
-    console.log('   • Your Google login session is preserved');
-    console.log('   • Navigate normally - take your time');
-    console.log('   • Complete any authentication if needed');
-    console.log('   • The script will wait for you');
-    console.log('\n');
+    console.log(`\n${message}\n`);
 
     await new Promise(resolve => {
-        rl.question('✅ Press Enter when ready to continue: ', () => {
+        rl.question('✅ Press Enter when ready: ', () => {
             rl.close();
             resolve();
         });
     });
 
-    console.log('\n✨ Continuing with automation...\n');
-}
-
-// === SMART NAVIGATION GUIDE ===
-async function guidedNavigation() {
-    console.log('\n📍 NAVIGATION GUIDE FOR RIVO SAFEGUARD');
-    console.log('━'.repeat(50));
-    console.log('\nTypical steps:');
-    console.log('1. Go to: https://www.rivosafeguard.com/insight/');
-    console.log('2. If prompted, log in with your Google account');
-    console.log('3. Click the menu/app launcher (usually top-left)');
-    console.log('4. Navigate to User Management or similar');
-    console.log('5. Click "Create New User" or similar button');
     console.log('\n');
-
-    await interactiveNavigation("Please navigate to the user creation form");
 }
 
 // === DETECT USER CREATION FORM ===
@@ -365,10 +303,8 @@ async function detectUserCreationForm(driver) {
             // Not in main content
         }
 
-        // Check all iframes
+        // Check iframes
         const frames = await driver.findElements(By.css('iframe'));
-        console.log(`   Checking ${frames.length} iframe(s)...`);
-
         for (let i = 0; i < frames.length; i++) {
             try {
                 await driver.switchTo().defaultContent();
@@ -378,27 +314,25 @@ async function detectUserCreationForm(driver) {
                 console.log(`✅ Form found in iframe ${i}`);
                 return true;
             } catch (e) {
-                // Continue checking
+                // Continue
             }
         }
 
         await driver.switchTo().defaultContent();
-        console.log('❌ Form not found');
         return false;
 
     } catch (error) {
-        console.log('❌ Error detecting form:', error.message);
         return false;
     }
 }
 
 // === FILL USER FORM ===
-async function fillUserFormNaturally(driver, contractor, automator) {
+async function fillUserForm(driver, contractor, automator) {
     console.log(`\n👤 Creating user: ${contractor.fullName}`);
     console.log(`📝 Username: ${contractor.username}`);
 
     try {
-        // Fill basic fields
+        // Fill required fields
         await automator.waitAndType(By.id("Username"), contractor.username, "Username");
         await automator.randomDelay(1000, 2000);
 
@@ -417,18 +351,14 @@ async function fillUserFormNaturally(driver, contractor, automator) {
         await automator.waitAndType(By.id("Attributes.Users.EmployeeNumber"), contractor.code, "Employee Number");
         await automator.randomDelay(1000, 2000);
 
-        // Optional fields
-        console.log('\n🔧 Checking for optional fields...');
-
+        // Try optional fields
         try {
             await automator.selectDropdownOption(
                 By.id("Attributes.Users.StatusOfEmployment"),
                 "Current",
                 "Employment Status"
             );
-        } catch (e) {
-            console.log('   ℹ️  Employment Status not available');
-        }
+        } catch (e) { }
 
         try {
             await automator.selectDropdownOption(
@@ -436,24 +366,15 @@ async function fillUserFormNaturally(driver, contractor, automator) {
                 "Limited access user",
                 "User Type"
             );
-        } catch (e) {
-            console.log('   ℹ️  User Type not available');
-        }
+        } catch (e) { }
 
-        // Review and confirm
+        // Confirm save
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
         });
 
-        console.log('\n' + '─'.repeat(50));
-        console.log('📋 REVIEW USER DETAILS:');
-        console.log(`   Name: ${contractor.fullName}`);
-        console.log(`   Username: ${contractor.username}`);
-        console.log(`   Department: ${contractor.department}`);
-        console.log(`   Employee #: ${contractor.code}`);
-        console.log('─'.repeat(50) + '\n');
-
+        console.log('\n📋 Review and confirm:');
         const shouldSave = await new Promise(resolve => {
             rl.question('💾 Save this user? (y/n): ', (answer) => {
                 rl.close();
@@ -462,14 +383,13 @@ async function fillUserFormNaturally(driver, contractor, automator) {
         });
 
         if (shouldSave.toLowerCase() === 'y') {
-            console.log('\n💾 Saving user...');
+            console.log('💾 Saving...');
             await automator.waitAndClick(By.name("save"), "Save button");
             await automator.randomDelay(3000, 5000);
-
-            console.log(`✅ Successfully created: ${contractor.username}`);
+            console.log(`✅ Created: ${contractor.username}`);
             return true;
         } else {
-            console.log('🚫 User creation skipped');
+            console.log('🚫 Skipped');
             return false;
         }
 
@@ -479,12 +399,12 @@ async function fillUserFormNaturally(driver, contractor, automator) {
     }
 }
 
-// === LOAD CONTRACTORS FROM EXCEL ===
+// === LOAD CONTRACTORS ===
 function loadContractorsFromExcel(mode = 'single') {
-    console.log('📁 Loading contractor data...');
+    console.log('📁 Loading contractors from Excel...');
 
     if (!fs.existsSync(CONFIG.excelFileName)) {
-        throw new Error(`❌ Excel file not found: ${CONFIG.excelFileName}`);
+        throw new Error(`Excel file not found: ${CONFIG.excelFileName}`);
     }
 
     function findColumnIndex(headers, possibleNames) {
@@ -509,7 +429,7 @@ function loadContractorsFromExcel(mode = 'single') {
     const departmentIndex = findColumnIndex(headers, ['department', 'dept']);
 
     if (firstNameIndex === -1 || lastNameIndex === -1 || departmentIndex === -1) {
-        throw new Error('❌ Required columns not found');
+        throw new Error('Required columns not found');
     }
 
     const contractors = [];
@@ -541,118 +461,96 @@ function loadContractorsFromExcel(mode = 'single') {
     }
 
     if (contractors.length === 0) {
-        throw new Error('❌ No Security contractors found');
+        throw new Error('No Security contractors found');
     }
 
-    console.log(`✅ Found ${contractors.length} Security contractors\n`);
+    console.log(`✅ Found ${contractors.length} contractors\n`);
     return mode === 'all' ? contractors : contractors[0];
 }
 
-// === MAIN AUTOMATION ===
-async function runChromeProfileAutomation(mode = 'single') {
+// === MAIN FUNCTION ===
+async function runWithExistingProfile(mode = 'single') {
     let driver;
 
     try {
-        console.log('🌟 CHROME PROFILE AUTOMATION WITH GOOGLE SSO\n');
-        console.log('This script preserves your Google login sessions\n');
+        console.log('🌟 USING YOUR EXISTING CHROME PROFILE\n');
+        console.log('This preserves your Google login and all sessions\n');
 
         // Load contractors
         const contractors = mode === 'single' ?
             [loadContractorsFromExcel('single')] :
             loadContractorsFromExcel('all');
 
-        // Connect to Chrome with profile
-        driver = await connectToChromeWithProfile();
+        // Connect to Chrome
+        driver = await connectToYourChrome();
         const automator = new NaturalHumanAutomator(driver);
 
-        // Initial navigation guide
-        await guidedNavigation();
+        // Guide user
+        console.log('📍 NAVIGATION STEPS:');
+        console.log('1. Go to: https://www.rivosafeguard.com/insight/');
+        console.log('2. Your Google login should work automatically');
+        console.log('3. Navigate to User Management → Create User\n');
 
-        // Process each contractor
+        await waitForUserNavigation("Please navigate to the user creation form in Rivo Safeguard");
+
+        // Process contractors
         for (let i = 0; i < contractors.length; i++) {
             const contractor = contractors[i];
 
-            console.log(`\n${'═'.repeat(60)}`);
-            console.log(`📊 Processing contractor ${i + 1} of ${contractors.length}`);
-            console.log('═'.repeat(60));
+            console.log(`\n${'═'.repeat(50)}`);
+            console.log(`📊 Contractor ${i + 1} of ${contractors.length}`);
+            console.log('═'.repeat(50));
 
-            // Detect form
+            // Check for form
             let formFound = await detectUserCreationForm(driver);
 
             if (!formFound) {
-                console.log('\n⚠️  User creation form not detected');
-                await interactiveNavigation("Please navigate to the user creation form");
-
+                console.log('⚠️  Form not found');
+                await waitForUserNavigation("Please navigate to the user creation form");
                 formFound = await detectUserCreationForm(driver);
-                if (!formFound) {
-                    console.log('❌ Could not find form, skipping this contractor');
-                    continue;
+            }
+
+            if (formFound) {
+                await fillUserForm(driver, contractor, automator);
+
+                if (i < contractors.length - 1) {
+                    await waitForUserNavigation("Navigate back to create another user");
                 }
             }
-
-            // Fill form
-            const success = await fillUserFormNaturally(driver, contractor, automator);
-
-            if (success && i < contractors.length - 1) {
-                await interactiveNavigation("Navigate back to create another user");
-            }
         }
 
-        // Completion
-        console.log('\n' + '═'.repeat(60));
-        console.log('🎉 AUTOMATION COMPLETED!');
-        console.log('═'.repeat(60));
-        console.log(`\n✅ Processed ${contractors.length} contractor(s)`);
-        console.log('📌 Chrome remains open with your session intact');
+        console.log('\n' + '═'.repeat(50));
+        console.log('🎉 COMPLETED!');
+        console.log('═'.repeat(50));
+        console.log('✅ Your Chrome remains open with all sessions intact\n');
 
     } catch (error) {
-        console.error('\n❌ Error:', error.message);
-
-        if (error.message.includes('connect')) {
-            console.log('\n💡 Connection Tips:');
-            console.log('1. Close ALL Chrome windows');
-            console.log('2. Run this script again');
-            console.log('3. Let the script start Chrome for you');
-        }
+        console.error('❌ Error:', error.message);
     }
-
-    console.log('\n👋 Script finished. Chrome remains under your control.\n');
 }
 
-// === COMMAND LINE INTERFACE ===
+// === ENTRY POINT ===
 if (require.main === module) {
     const args = process.argv.slice(2);
 
-    console.log('🔐 CHROME PROFILE AUTOMATION\n');
+    console.log('🔐 EXISTING CHROME PROFILE AUTOMATION\n');
 
     if (args.includes('--help')) {
         console.log('📚 Usage:');
-        console.log('  node script.js           Process single contractor');
-        console.log('  node script.js --all     Process all contractors');
-        console.log('  node script.js --help    Show this help\n');
+        console.log('  node script.js        Single contractor');
+        console.log('  node script.js --all  All contractors\n');
 
-        console.log('✨ Features:');
-        console.log('  • Uses your existing Chrome profile');
-        console.log('  • Preserves Google login sessions');
-        console.log('  • Natural human-like automation');
-        console.log('  • Interactive navigation prompts\n');
-
-        console.log('🔧 Configuration:');
-        console.log('  Edit CONFIG.chromeProfile if using non-default profile');
-        console.log('  Current profile:', CONFIG.chromeProfile);
+        console.log('📋 How it works:');
+        console.log('1. You start Chrome with debugging enabled');
+        console.log('2. Script connects to YOUR Chrome');
+        console.log('3. Your Google login works automatically');
+        console.log('4. You navigate, script fills forms\n');
 
     } else if (args.includes('--all')) {
-        console.log('👥 Mode: ALL contractors\n');
-        runChromeProfileAutomation('all');
-
+        runWithExistingProfile('all');
     } else {
-        console.log('👤 Mode: SINGLE contractor\n');
-        runChromeProfileAutomation('single');
+        runWithExistingProfile('single');
     }
 }
 
-module.exports = {
-    runChromeProfileAutomation,
-    connectToChromeWithProfile,
-    NaturalHumanAutomator
-};
+module.exports = { runWithExistingProfile };
